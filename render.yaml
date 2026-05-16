@@ -1,0 +1,118 @@
+# Render Blueprint for XIcmo
+# https://render.com/docs/blueprint-spec
+#
+# Deploy with one click:
+#   1. Push this file to GitHub (already done if you're using BibhuXICMO).
+#   2. Render Dashboard → New → Blueprint → connect this repo → Apply.
+#   3. After the first deploy succeeds, open the web service → "Environment"
+#      tab → fill in the keys that are listed as "sync: false" below
+#      (e.g. ANTHROPIC_API_KEY, APIFY_TOKEN).
+#   4. Add a custom domain if you want, or use the *.onrender.com URL.
+#
+# Plans: everything is on Render's free tier for first deploy. Upgrade the
+# web service + database to "starter" once you have traffic — the free web
+# tier spins down after 15 min idle, which adds cold-start latency.
+
+databases:
+  - name: xicmo-db
+    plan: free
+    databaseName: xicmo
+    user: xicmo
+    postgresMajorVersion: 16
+
+services:
+  # ------------------------------------------------------------------
+  # Redis (Render Key Value) — used by BullMQ for job queue + rate limit
+  # ------------------------------------------------------------------
+  - type: keyvalue
+    name: xicmo-redis
+    plan: free
+    ipAllowList: []   # empty list = only accessible from inside Render
+
+  # ------------------------------------------------------------------
+  # Web service — the Next.js app itself
+  # ------------------------------------------------------------------
+  - type: web
+    name: xicmo-web
+    runtime: node
+    plan: free
+    region: oregon              # change to "frankfurt" or "singapore" if closer to you
+    buildCommand: npm install && npm run build
+    # `prisma db push` runs once before each deploy boots so the schema
+    # stays in sync. It's idempotent — safe to re-run on every deploy.
+    preDeployCommand: npx prisma db push --skip-generate
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: xicmo-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: xicmo-redis
+          property: connectionString
+      - key: AUTH_SECRET
+        generateValue: true       # Render generates a long random string
+      # Render automatically sets RENDER_EXTERNAL_URL, but the app reads
+      # NEXT_PUBLIC_APP_URL / APP_URL. Fill these in after first deploy
+      # using the *.onrender.com URL Render assigns (or your custom domain).
+      - key: NEXT_PUBLIC_APP_URL
+        sync: false
+      - key: APP_URL
+        sync: false
+      - key: AUTH_URL
+        sync: false
+
+      # ----- LLM keys (add what you have) -----
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GOOGLE_GEMINI_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+
+      # ----- Apify (Ahrefs scraper) -----
+      - key: APIFY_TOKEN
+        sync: false
+      - key: APIFY_AHREFS_ACTOR_ID
+        value: radeance~ahrefs-scraper
+
+      # ----- Google PageSpeed (free site-audit Lighthouse scores) -----
+      - key: PAGESPEED_API_KEY
+        sync: false
+
+      # ----- OAuth providers (optional — "Continue with Google/GitHub") -----
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+
+      # ----- Stripe billing (optional) -----
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+        sync: false
+      - key: STRIPE_PRICE_MAX_MONTHLY
+        sync: false
+
+      # ----- Email (Resend — for password resets) -----
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        value: Xicmo <hello@xicmo.com>
+
+      # ----- Cron secret (used by the cron jobs you may add later) -----
+      - key: CRON_SECRET
+        generateValue: true

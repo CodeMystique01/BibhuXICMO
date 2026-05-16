@@ -5,6 +5,7 @@ import { prisma } from "@/backend/db";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/frontend/components/ui/card";
 import { Badge } from "@/frontend/components/ui/badge";
 import { RunAgentButton } from "@/frontend/components/app/run-agent-button";
+import { AhrefsPanel } from "@/frontend/components/app/ahrefs-panel";
 
 export const metadata = { title: "SEO Agent" };
 
@@ -85,6 +86,8 @@ export default async function SeoAgentPage() {
           </CardContent>
         </Card>
       </div>
+
+      <AhrefsPanel hasWebsite={!!workspace.websiteUrl} />
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowRight, Check, Copy, Globe, Loader2, Sparkles } from "lucide-react";
+import { ArrowRight, Check, Copy, Globe, Loader2, Lock, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/frontend/components/ui/button";
 import { Input } from "@/frontend/components/ui/input";
@@ -232,80 +232,115 @@ function AuditResultCard({ result }: { result: SuccessResponse }) {
         </div>
       </div>
 
-      {pageSpeed ? (
-        <div className="mt-6 grid grid-cols-2 gap-3">
-          <ScoreBlock label="Mobile" scores={pageSpeed.mobile} />
-          <ScoreBlock label="Desktop" scores={pageSpeed.desktop} />
+      <div className="relative mt-6">
+        <div
+          aria-hidden
+          className="pointer-events-none select-none blur-md"
+        >
+          {pageSpeed ? (
+            <div className="grid grid-cols-2 gap-3">
+              <ScoreBlock label="Mobile" scores={pageSpeed.mobile} />
+              <ScoreBlock label="Desktop" scores={pageSpeed.desktop} />
+            </div>
+          ) : null}
+
+          <div className="mt-6">
+            <h3 className="text-sm font-semibold">On-page signals</h3>
+            <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+              <Row k="Title" v={metadata.title || "(missing)"} />
+              <Row
+                k="Description"
+                v={
+                  metadata.description
+                    ? `${metadata.description.length} chars`
+                    : "(missing)"
+                }
+              />
+              <Row k="H1 count" v={String(metadata.h1.length)} />
+              <Row k="Word count" v={String(metadata.wordCount)} />
+              <Row
+                k="Images missing alt"
+                v={`${metadata.imagesMissingAlt} / ${metadata.images}`}
+              />
+              <Row k="JSON-LD blocks" v={String(metadata.jsonLd)} />
+              <Row k="Language" v={metadata.lang ?? "(not set)"} />
+              <Row k="Canonical" v={metadata.canonical ?? "(not set)"} />
+            </dl>
+          </div>
+
+          <div className="mt-6">
+            <h3 className="text-sm font-semibold">Top fixes</h3>
+            {issues.length === 0 ? (
+              <p className="mt-2 text-xs text-emerald-600 dark:text-emerald-400">
+                Looks healthy — no critical issues from the rule-based pass.
+              </p>
+            ) : (
+              <ul className="mt-2 divide-y rounded-md border">
+                {issues.map((i, idx) => (
+                  <li
+                    key={idx}
+                    className="flex items-start gap-3 px-3 py-2 text-xs"
+                  >
+                    <span
+                      className={
+                        "mt-1 inline-block h-2 w-2 shrink-0 rounded-full " +
+                        (i.severity === "high"
+                          ? "bg-red-500"
+                          : i.severity === "medium"
+                            ? "bg-amber-500"
+                            : "bg-slate-400")
+                      }
+                      aria-hidden
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium text-foreground">{i.title}</div>
+                      <p className="mt-0.5 leading-snug text-muted-foreground">
+                        {i.fix}
+                      </p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {moreIssues > 0 ? (
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                +{moreIssues} more issue{moreIssues === 1 ? "" : "s"} hidden
+              </p>
+            ) : null}
+          </div>
         </div>
-      ) : null}
 
-      <div className="mt-6">
-        <h3 className="text-sm font-semibold">On-page signals</h3>
-        <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-          <Row k="Title" v={metadata.title || "(missing)"} />
-          <Row
-            k="Description"
-            v={
-              metadata.description
-                ? `${metadata.description.length} chars`
-                : "(missing)"
-            }
-          />
-          <Row k="H1 count" v={String(metadata.h1.length)} />
-          <Row k="Word count" v={String(metadata.wordCount)} />
-          <Row k="Images missing alt" v={`${metadata.imagesMissingAlt} / ${metadata.images}`} />
-          <Row k="JSON-LD blocks" v={String(metadata.jsonLd)} />
-          <Row k="Language" v={metadata.lang ?? "(not set)"} />
-          <Row k="Canonical" v={metadata.canonical ?? "(not set)"} />
-        </dl>
-      </div>
-
-      <div className="mt-6">
-        <h3 className="text-sm font-semibold">Top fixes</h3>
-        {issues.length === 0 ? (
-          <p className="mt-2 text-xs text-emerald-600 dark:text-emerald-400">
-            Looks healthy — no critical issues from the rule-based pass.
-          </p>
-        ) : (
-          <ul className="mt-2 divide-y rounded-md border">
-            {issues.map((i, idx) => (
-              <li key={idx} className="flex items-start gap-3 px-3 py-2 text-xs">
-                <span
-                  className={
-                    "mt-1 inline-block h-2 w-2 shrink-0 rounded-full " +
-                    (i.severity === "high"
-                      ? "bg-red-500"
-                      : i.severity === "medium"
-                        ? "bg-amber-500"
-                        : "bg-slate-400")
-                  }
-                  aria-hidden
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="font-medium text-foreground">{i.title}</div>
-                  <p className="mt-0.5 leading-snug text-muted-foreground">{i.fix}</p>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-        {moreIssues > 0 ? (
-          <p className="mt-2 text-[11px] text-muted-foreground">
-            +{moreIssues} more issue{moreIssues === 1 ? "" : "s"} hidden — sign up
-            for the full report.
-          </p>
-        ) : null}
-      </div>
-
-      <div className="mt-6 flex flex-wrap items-center gap-3 rounded-xl border bg-primary/5 p-4">
-        <Sparkles className="h-4 w-4 text-primary" aria-hidden />
-        <p className="flex-1 text-xs text-muted-foreground">
-          This is the free preview. Get the full audit, GEO score, and
-          auto-drafted fixes inside the workspace.
-        </p>
-        <Button size="sm" asChild>
-          <Link href="/register">Sign up free</Link>
-        </Button>
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-gradient-to-b from-card/30 via-card/70 to-card/90 backdrop-blur-[1px]">
+          <div className="mx-4 w-full max-w-sm rounded-2xl border bg-card/95 p-6 text-center shadow-xl ring-1 ring-border">
+            <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
+              <Lock className="h-5 w-5" aria-hidden />
+            </div>
+            <h3 className="text-base font-semibold">
+              Sign up free to unlock the full report
+            </h3>
+            <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+              See full Lighthouse scores, every on-page signal, the complete
+              fix list, and AI-drafted patches you can ship as PRs.
+            </p>
+            <div className="mt-4 flex flex-col gap-2">
+              <Button size="sm" asChild>
+                <Link href="/register">
+                  <Sparkles className="h-4 w-4" />
+                  Sign up free
+                </Link>
+              </Button>
+              <p className="text-[11px] text-muted-foreground">
+                Already have an account?{" "}
+                <Link
+                  href="/login"
+                  className="font-medium text-foreground underline-offset-2 hover:underline"
+                >
+                  Log in
+                </Link>
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

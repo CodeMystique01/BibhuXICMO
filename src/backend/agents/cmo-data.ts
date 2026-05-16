@@ -41,6 +41,19 @@ export type CmoVoiceProfile = {
   tone?: string;
   styleGuidelines?: string[];
   avoid?: string[];
+  /**
+   * Public social-media handles for the brand. Auto-detected from the
+   * website (Claude + regex pre-scan) or manually edited in /settings.
+   */
+  socialHandles?: {
+    twitter?: string;
+    instagram?: string;
+    linkedin?: string;
+    facebook?: string;
+    youtube?: string;
+    github?: string;
+    tiktok?: string;
+  };
 };
 
 export type SeoIssue = {

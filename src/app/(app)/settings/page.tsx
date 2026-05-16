@@ -2,6 +2,8 @@ import { Settings as SettingsIcon } from "lucide-react";
 import { requireWorkspace } from "@/backend/workspace";
 import { Card, CardContent, CardHeader, CardTitle } from "@/frontend/components/ui/card";
 import { ThemeSelect } from "@/frontend/components/ui/theme-toggle";
+import { SocialHandlesCard } from "@/frontend/components/app/social-handles-card";
+import type { CmoVoiceProfile } from "@/backend/agents/cmo-data";
 import { WorkspaceSettingsForm } from "./form";
 
 export const metadata = { title: "Settings" };
@@ -55,6 +57,13 @@ export default async function SettingsPage() {
           />
         </CardContent>
       </Card>
+
+      <SocialHandlesCard
+        initial={
+          ((workspace.voiceProfile as CmoVoiceProfile | null)?.socialHandles ?? {}) as Record<string, string>
+        }
+        hasWebsiteUrl={!!workspace.websiteUrl}
+      />
 
       <Card>
         <CardHeader>

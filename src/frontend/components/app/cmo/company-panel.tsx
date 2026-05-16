@@ -6,10 +6,16 @@ import {
   AtSign,
   Building2,
   ChevronDown,
+  Facebook,
   FileText,
+  Github,
+  Instagram,
+  Linkedin,
   Megaphone,
   Target,
+  Twitter,
   Users,
+  Youtube,
 } from "lucide-react";
 import { Badge } from "@/frontend/components/ui/badge";
 import { Button } from "@/frontend/components/ui/button";
@@ -48,12 +54,7 @@ export function CompanyPanel({ data }: { data: CompanyData }) {
         </p>
       </CardHeader>
       <CardContent className="flex flex-1 flex-col gap-4 text-sm">
-        <Button variant="outline" size="sm" asChild>
-          <Link href="/settings" className="justify-start gap-2">
-            <AtSign className="h-3.5 w-3.5" aria-hidden />
-            Add social handles
-          </Link>
-        </Button>
+        <SocialHandlesRow voice={data.voice ?? null} />
 
         <p className="text-sm leading-relaxed text-muted-foreground">{description}</p>
 
@@ -296,4 +297,104 @@ function DocumentBody({
       );
     }
   }
+}
+
+
+type CompanyVoice = (CompanyData["voice"]);
+
+function SocialHandlesRow({ voice }: { voice: CompanyVoice | null }) {
+  const handles = voice?.socialHandles ?? {};
+  const items: Array<{
+    key: keyof typeof handles;
+    icon: typeof Twitter;
+    label: string;
+    href: (v: string) => string;
+  }> = [
+    {
+      key: "twitter",
+      icon: Twitter,
+      label: "X",
+      href: (v) => `https://x.com/${stripAt(v)}`,
+    },
+    {
+      key: "instagram",
+      icon: Instagram,
+      label: "Instagram",
+      href: (v) => `https://instagram.com/${stripAt(v)}`,
+    },
+    {
+      key: "linkedin",
+      icon: Linkedin,
+      label: "LinkedIn",
+      href: (v) => (v.startsWith("http") ? v : `https://${v.replace(/^https?:\/\//, "")}`),
+    },
+    {
+      key: "youtube",
+      icon: Youtube,
+      label: "YouTube",
+      href: (v) => (v.startsWith("@") ? `https://youtube.com/${v}` : `https://${v.replace(/^https?:\/\//, "")}`),
+    },
+    {
+      key: "facebook",
+      icon: Facebook,
+      label: "Facebook",
+      href: (v) => (v.startsWith("http") ? v : `https://${v.replace(/^https?:\/\//, "")}`),
+    },
+    {
+      key: "github",
+      icon: Github,
+      label: "GitHub",
+      href: (v) => `https://github.com/${v.replace(/^@/, "")}`,
+    },
+  ];
+
+  const present = items.filter((it) => {
+    const v = handles[it.key];
+    return typeof v === "string" && v.trim().length > 0;
+  });
+
+  if (present.length === 0) {
+    return (
+      <Button variant="outline" size="sm" asChild>
+        <Link href="/settings" className="justify-start gap-2">
+          <AtSign className="h-3.5 w-3.5" aria-hidden />
+          Add social handles
+        </Link>
+      </Button>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {present.map((it) => {
+        const Icon = it.icon;
+        const value = handles[it.key] as string;
+        return (
+          <a
+            key={it.key}
+            href={it.href(value)}
+            target="_blank"
+            rel="noreferrer noopener"
+            title={`${it.label}: ${value}`}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border bg-background px-2 text-xs font-medium text-foreground transition-colors hover:border-primary/40 hover:bg-primary/5"
+          >
+            <Icon className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+            <span className="max-w-[10ch] truncate font-mono text-[11px]">
+              {value}
+            </span>
+          </a>
+        );
+      })}
+      <Link
+        href="/settings"
+        className="inline-flex h-8 items-center gap-1 rounded-md border border-dashed px-2 text-[11px] text-muted-foreground hover:text-foreground"
+      >
+        Edit
+      </Link>
+    </div>
+  );
+}
+
+function stripAt(v: string): string {
+  return v.startsWith("@") ? v.slice(1) : v;
 }

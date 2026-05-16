@@ -53,6 +53,15 @@ const envSchema = z.object({
   RESEND_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().default("Xicmo <hello@xicmo.com>"),
 
+  /** Apify token used for the Ahrefs scraper actor + any other Apify integrations. */
+  APIFY_TOKEN: z.string().optional(),
+  /**
+   * Apify actor id that returns Ahrefs-style site data (domain rating,
+   * backlinks, organic traffic, top keywords). Defaults to the
+   * `radeance/ahrefs-scraper` actor; override to swap providers.
+   */
+  APIFY_AHREFS_ACTOR_ID: z.string().default("radeance~ahrefs-scraper"),
+
   SENTRY_DSN: z.string().optional(),
 });
 

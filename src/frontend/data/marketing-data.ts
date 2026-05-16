@@ -3,7 +3,6 @@ import { SITE_NAME } from "@/shared/site";
 import {
   BarChart3,
   Bot,
-  Code2,
   FileText,
   Globe,
   Hash,
@@ -100,15 +99,6 @@ export const AGENTS: AgentCard[] = [
     accent: "from-yellow-500/20 to-amber-500/10",
   },
   {
-    id: "coding",
-    name: "Coding Agent",
-    tagline: "Technical SEO, automated",
-    description:
-      "Automate technical SEO fixes and site improvements with our AI coding agent.",
-    icon: Code2,
-    accent: "from-slate-500/20 to-zinc-500/10",
-  },
-  {
     id: "content",
     name: "AI Content Writer",
     tagline: "Ship-ready long-form",
@@ -196,7 +186,7 @@ export const FAQS: Faq[] = [
   },
   {
     q: "What is the difference between Free and Max?",
-    a: "Free includes website analysis, the initial strategy document, Hacker News Agent access, and a small credit allowance. Max ($99/mo) unlocks 2,000 credits (~20,000 messages), the full agent suite (SEO, GEO, Reddit, X, LinkedIn, Coding, GSC, GA4), and daily scheduled runs.",
+    a: "Free includes website analysis, the initial strategy document, Hacker News Agent access, and a small credit allowance. Max ($99/mo) unlocks 2,000 credits (~20,000 messages), the full agent suite (SEO, GEO, Reddit, X, LinkedIn, GSC, GA4), and daily scheduled runs.",
   },
   {
     q: "How does the Reddit community growth feature work?",
