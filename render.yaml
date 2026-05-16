@@ -38,10 +38,10 @@ services:
     plan: free
     region: oregon              # change to "frankfurt" or "singapore" if closer to you
     buildCommand: npm install && npm run build
-    # `prisma db push` runs once before each deploy boots so the schema
-    # stays in sync. It's idempotent — safe to re-run on every deploy.
-    preDeployCommand: npx prisma db push --skip-generate
-    startCommand: npm start
+    # `prisma db push` runs in startCommand (instead of preDeployCommand)
+    # so the free tier is happy — pre-deploy hooks are paid-only on Render.
+    # The push is idempotent, so re-running on every cold start is safe.
+    startCommand: npx prisma db push --skip-generate && npm start
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
