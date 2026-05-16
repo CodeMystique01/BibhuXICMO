@@ -89,6 +89,10 @@ model Workspace {
   voiceProfile Json? // brand voice, tone, style guide
   /// Cached structured LLM analysis for /agent/cmo (homepage-only; refreshed when stale or URL changes).
   cmoLlmSnapshot Json?
+  /// Cached Ahrefs snapshot (DR, backlinks, traffic, top keywords/countries/pages).
+  /// Refreshed when stale (>24h) or when websiteUrl changes. Apify calls are paid, so cache aggressively.
+  ahrefsSnapshot Json?
+  ahrefsSnapshotAt DateTime?
   ownerUserId  String
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt

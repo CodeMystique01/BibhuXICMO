@@ -46,6 +46,8 @@ export default async function CmoAgentPage() {
     industry: workspace.industry,
     icp: workspace.icp,
     voiceProfile: workspace.voiceProfile,
+    ahrefsSnapshot: workspace.ahrefsSnapshot,
+    ahrefsSnapshotAt: workspace.ahrefsSnapshotAt,
     plan,
     credits,
   });
@@ -173,6 +175,8 @@ function loadSlow(fast: CmoFastData, workspaceId: string) {
       ga4Connected: fast.integrations.ga4,
       gscConnected: fast.integrations.gsc,
       withPageSpeed: true,
+      ahrefsSnapshot: fast.workspace.ahrefsSnapshot,
+      ahrefsSnapshotAt: fast.workspace.ahrefsSnapshotAt,
     });
     slowCache.set(fast, p);
   }

@@ -11,6 +11,10 @@ import { prisma } from "@/backend/db";
 import { fetchPage, type PageSnapshot } from "@/backend/scraper/fetch";
 import { fetchPageSpeed, type PageSpeedResult } from "@/backend/pagespeed";
 import {
+  loadAhrefsWithCache,
+  type CachedAhrefsState,
+} from "@/backend/ahrefs-cache";
+import {
   listGSCSites,
   listGA4Properties,
   querySearchAnalytics,
@@ -105,6 +109,8 @@ export type CmoFastData = {
     websiteUrl: string | null;
     industry: string | null;
     icp: string | null;
+    ahrefsSnapshot: unknown;
+    ahrefsSnapshotAt: Date | null;
   };
   plan: "FREE" | "MAX";
   credits: number | null;
@@ -134,6 +140,8 @@ export type CmoSlowData = {
   pageSpeed: PageSpeedResult | null;
   gsc: { connected: boolean; rows: GscRow[]; site: string | null };
   ga4: { connected: boolean; rows: Ga4Row[]; property: string | null };
+  /** Ahrefs snapshot (DR, backlinks, traffic, top keywords/countries/pages) — cached 24h on Workspace. */
+  ahrefs: CachedAhrefsState;
   /** Homepage-only LLM analysis (one provider key). Cached on Workspace.cmoLlmSnapshot. */
   llmAnalysis: CmoLlmAnalysis | null;
   /**
@@ -159,6 +167,8 @@ export async function loadCmoFastData(args: {
   voiceProfile: unknown;
   plan: "FREE" | "MAX";
   credits: number | null;
+  ahrefsSnapshot?: unknown;
+  ahrefsSnapshotAt?: Date | null;
 }): Promise<CmoFastData> {
   const voice = (args.voiceProfile ?? null) as CmoVoiceProfile | null;
 
@@ -219,6 +229,8 @@ export async function loadCmoFastData(args: {
       websiteUrl: args.websiteUrl,
       industry: args.industry,
       icp: args.icp,
+      ahrefsSnapshot: args.ahrefsSnapshot ?? null,
+      ahrefsSnapshotAt: args.ahrefsSnapshotAt ?? null,
     },
     plan: args.plan,
     credits: args.credits,
@@ -261,6 +273,8 @@ export async function loadCmoSlowData(args: {
   ga4Connected: boolean;
   gscConnected: boolean;
   withPageSpeed?: boolean;
+  ahrefsSnapshot?: unknown;
+  ahrefsSnapshotAt?: Date | null;
 }): Promise<CmoSlowData> {
   const {
     websiteUrl,
@@ -272,13 +286,19 @@ export async function loadCmoSlowData(args: {
     withPageSpeed = true,
   } = args;
 
-  const [liveSnapshot, pageSpeed, gscData, ga4Data] = await Promise.all([
+  const [liveSnapshot, pageSpeed, gscData, ga4Data, ahrefs] = await Promise.all([
     websiteUrl ? fetchPage(websiteUrl).catch(() => null) : Promise.resolve(null),
     withPageSpeed && websiteUrl
       ? fetchPageSpeed(websiteUrl).catch(() => null)
       : Promise.resolve(null),
     gscConnected ? loadGsc(args.workspaceId) : Promise.resolve(null),
     ga4Connected ? loadGa4(args.workspaceId) : Promise.resolve(null),
+    loadAhrefsWithCache({
+      workspaceId: args.workspaceId,
+      websiteUrl,
+      ahrefsSnapshot: args.ahrefsSnapshot,
+      ahrefsSnapshotAt: args.ahrefsSnapshotAt ?? null,
+    }),
   ]);
 
   let llmAnalysis: CmoLlmAnalysis | null = null;
@@ -344,6 +364,7 @@ export async function loadCmoSlowData(args: {
     pageSpeed,
     gsc: gscData ?? { connected: gscConnected, rows: [], site: null },
     ga4: ga4Data ?? { connected: ga4Connected, rows: [], property: null },
+    ahrefs,
     llmAnalysis,
     freshVoice,
     freshIndustry,

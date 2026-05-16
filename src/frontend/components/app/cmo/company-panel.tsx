@@ -12,6 +12,7 @@ import {
   Instagram,
   Linkedin,
   Megaphone,
+  Plus,
   Target,
   Twitter,
   Users,
@@ -45,9 +46,19 @@ export function CompanyPanel({ data }: { data: CompanyData }) {
   return (
     <Card className="flex h-full flex-col">
       <CardHeader className="space-y-1 pb-3">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <Building2 className="h-4 w-4 text-primary" aria-hidden />
-          Company
+        <CardTitle className="flex items-center justify-between gap-2 text-base">
+          <span className="flex items-center gap-2">
+            <Building2 className="h-4 w-4 text-primary" aria-hidden />
+            Company
+          </span>
+          <Link
+            href="/settings#websiteUrl"
+            title="Change the site this dashboard tracks. We re-run audits, regenerate strategy, and refresh Ahrefs + PageSpeed automatically."
+            aria-label="Switch or audit a new site"
+            className="inline-flex h-6 w-6 items-center justify-center rounded-md border bg-background text-muted-foreground transition-colors hover:border-primary/50 hover:bg-primary/5 hover:text-primary"
+          >
+            <Plus className="h-3.5 w-3.5" aria-hidden />
+          </Link>
         </CardTitle>
         <p className="text-xs text-muted-foreground">
           Add your handles so agents can learn your tone from public posts.

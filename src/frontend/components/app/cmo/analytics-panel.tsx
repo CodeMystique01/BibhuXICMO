@@ -10,6 +10,8 @@ import {
   ExternalLink,
   Globe,
   Image as ImageIcon,
+  Link2,
+  Search,
   Sparkles,
   TrendingUp,
 } from "lucide-react";
@@ -467,10 +469,14 @@ function SearchTab({ data }: { data: CmoData }) {
 
 function TrafficTab({ data }: { data: CmoData }) {
   const llm = data.llmAnalysis;
+  const ahrefs = data.ahrefs.kind === "ready" ? data.ahrefs.snapshot : null;
 
   if (!data.ga4.connected) {
     return (
       <div className="space-y-3">
+        {ahrefs ? (
+          <AhrefsTrafficCard snapshot={ahrefs} stale={data.ahrefs.kind === "ready" && data.ahrefs.age === "stale"} />
+        ) : null}
         {llm ? (
           <div className="rounded-md border bg-muted/15 p-4 text-xs leading-relaxed">
             <div className="mb-2 flex items-center gap-1.5 font-semibold text-foreground">
@@ -572,9 +578,13 @@ function LinksTab({ data }: { data: CmoData }) {
   const internal = links.filter((l) => l.internal).length;
   const external = links.length - internal;
   const sample = links.slice(0, 8);
+  const ahrefs = data.ahrefs.kind === "ready" ? data.ahrefs.snapshot : null;
 
   return (
     <div className="space-y-3">
+      {ahrefs ? (
+        <AhrefsBacklinksCard snapshot={ahrefs} stale={data.ahrefs.kind === "ready" && data.ahrefs.age === "stale"} />
+      ) : null}
       <div className="grid grid-cols-3 gap-2 text-center">
         <Stat label="Total links" value={links.length} />
         <Stat label="Internal" value={internal} />
@@ -867,4 +877,266 @@ function BigStat({
       </div>
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+//  Ahrefs visualizations — surface the paid Apify snapshot in Traffic + Links
+// ---------------------------------------------------------------------------
+
+type AhrefsSnap = NonNullable<
+  Extract<CmoData["ahrefs"], { kind: "ready" }>
+>["snapshot"];
+
+function AhrefsTrafficCard({
+  snapshot,
+  stale,
+}: {
+  snapshot: AhrefsSnap;
+  stale: boolean;
+}) {
+  return (
+    <section className="rounded-lg border bg-gradient-to-br from-primary/5 via-transparent to-transparent p-4">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <TrendingUp className="h-4 w-4 text-primary" aria-hidden />
+          <h3 className="text-sm font-semibold">Ahrefs traffic snapshot</h3>
+          {stale ? (
+            <Badge variant="outline" className="text-[10px]">
+              stale
+            </Badge>
+          ) : null}
+        </div>
+        <span className="text-[10px] text-muted-foreground">
+          via Apify · {snapshot.domain}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+        <AhrefsStat
+          label="Organic traffic / mo"
+          value={snapshot.organicTraffic}
+          formatter={formatCompactNum}
+          accent
+        />
+        <AhrefsStat
+          label="Last month"
+          value={snapshot.organicTrafficLastMonth}
+          formatter={formatCompactNum}
+        />
+        <AhrefsStat
+          label="Traffic value"
+          value={snapshot.organicTrafficValue}
+          formatter={(n) => `$${formatCompactNum(n)}`}
+        />
+        <AhrefsStat
+          label="Tracked keywords"
+          value={snapshot.organicKeywords}
+          formatter={formatCompactNum}
+        />
+      </div>
+
+      {snapshot.topKeywords.length > 0 ? (
+        <div className="mt-4">
+          <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <Search className="h-3 w-3" /> Top organic keywords
+          </div>
+          <div className="overflow-hidden rounded-md border">
+            <table className="w-full text-xs">
+              <thead className="bg-muted/40 text-[10px] uppercase tracking-wider text-muted-foreground">
+                <tr>
+                  <th className="px-2 py-1.5 text-left">Keyword</th>
+                  <th className="px-2 py-1.5 text-right">Pos</th>
+                  <th className="px-2 py-1.5 text-right">Vol</th>
+                  <th className="px-2 py-1.5 text-right">Traffic</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {snapshot.topKeywords.slice(0, 8).map((k, i) => (
+                  <tr key={`${k.keyword}-${i}`} className="hover:bg-muted/30">
+                    <td className="px-2 py-1.5 font-medium">{k.keyword}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">
+                      {k.position ?? "—"}
+                    </td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">
+                      {k.volume != null ? formatCompactNum(k.volume) : "—"}
+                    </td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">
+                      {k.traffic != null ? formatCompactNum(k.traffic) : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
+
+      {snapshot.topCountries.length > 0 ? (
+        <div className="mt-3">
+          <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <Globe className="h-3 w-3" /> Traffic by country
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {snapshot.topCountries.slice(0, 8).map((c) => (
+              <span
+                key={c.country}
+                className="inline-flex items-center gap-1.5 rounded-md border bg-background px-2 py-1 text-[11px]"
+              >
+                <span className="font-semibold uppercase">{c.country}</span>
+                {c.share != null ? (
+                  <span className="font-mono text-muted-foreground">
+                    {formatPct(c.share)}
+                  </span>
+                ) : null}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <p className="mt-3 text-[10px] text-muted-foreground">
+        Want session-level breakdowns, conversions, and revenue?{" "}
+        <Link href="/integrations/ga4" className="underline-offset-2 hover:underline">
+          Connect Google Analytics
+        </Link>
+        .
+      </p>
+    </section>
+  );
+}
+
+function AhrefsBacklinksCard({
+  snapshot,
+  stale,
+}: {
+  snapshot: AhrefsSnap;
+  stale: boolean;
+}) {
+  const drColor =
+    snapshot.domainRating == null
+      ? "text-muted-foreground"
+      : snapshot.domainRating >= 70
+        ? "text-emerald-500"
+        : snapshot.domainRating >= 40
+          ? "text-amber-500"
+          : "text-red-500";
+
+  return (
+    <section className="rounded-lg border bg-gradient-to-br from-primary/5 via-transparent to-transparent p-4">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Link2 className="h-4 w-4 text-primary" aria-hidden />
+          <h3 className="text-sm font-semibold">Ahrefs backlink profile</h3>
+          {stale ? (
+            <Badge variant="outline" className="text-[10px]">
+              stale
+            </Badge>
+          ) : null}
+        </div>
+        <span className="text-[10px] text-muted-foreground">
+          via Apify · {snapshot.domain}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+        <div className="rounded-md border bg-card/50 p-3">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            Domain Rating
+          </div>
+          <div className={`mt-1 text-2xl font-semibold tabular-nums ${drColor}`}>
+            {snapshot.domainRating ?? "—"}
+            {snapshot.domainRating != null ? (
+              <span className="ml-1 text-xs text-muted-foreground">/ 100</span>
+            ) : null}
+          </div>
+        </div>
+        <AhrefsStat
+          label="Backlinks"
+          value={snapshot.backlinks}
+          formatter={formatCompactNum}
+        />
+        <AhrefsStat
+          label="Referring domains"
+          value={snapshot.referringDomains}
+          formatter={formatCompactNum}
+        />
+        <AhrefsStat
+          label="Ahrefs Rank"
+          value={snapshot.ahrefsRank}
+          formatter={(n) => `#${formatCompactNum(n)}`}
+        />
+      </div>
+
+      {snapshot.dofollowBacklinks != null ||
+      snapshot.dofollowReferringDomains != null ? (
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          Dofollow:{" "}
+          <span className="font-mono text-foreground">
+            {snapshot.dofollowBacklinks != null
+              ? formatCompactNum(snapshot.dofollowBacklinks)
+              : "—"}
+          </span>{" "}
+          backlinks ·{" "}
+          <span className="font-mono text-foreground">
+            {snapshot.dofollowReferringDomains != null
+              ? formatCompactNum(snapshot.dofollowReferringDomains)
+              : "—"}
+          </span>{" "}
+          referring domains
+        </p>
+      ) : null}
+
+      <p className="mt-3 text-[10px] text-muted-foreground">
+        Want per-page backlink lists and broken-link opportunities? See the{" "}
+        <Link href="/agents/seo" className="underline-offset-2 hover:underline">
+          SEO Agent
+        </Link>
+        .
+      </p>
+    </section>
+  );
+}
+
+function AhrefsStat({
+  label,
+  value,
+  formatter,
+  accent,
+}: {
+  label: string;
+  value: number | null;
+  formatter?: (n: number) => string;
+  accent?: boolean;
+}) {
+  const display =
+    value == null ? "—" : formatter ? formatter(value) : value.toLocaleString();
+  return (
+    <div className="rounded-md border bg-card/50 p-3">
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+        {label}
+      </div>
+      <div
+        className={
+          "mt-1 text-2xl font-semibold tabular-nums " +
+          (accent ? "text-primary" : "text-foreground")
+        }
+      >
+        {display}
+      </div>
+    </div>
+  );
+}
+
+function formatCompactNum(n: number): string {
+  if (Math.abs(n) >= 1_000_000)
+    return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
+  if (Math.abs(n) >= 1_000)
+    return (n / 1_000).toFixed(1).replace(/\.0$/, "") + "K";
+  return n.toLocaleString();
+}
+
+function formatPct(share: number): string {
+  // Some Ahrefs fields come as 0.41 (decimal), some as 41 (percent).
+  const v = share > 1 ? share : share * 100;
+  return `${v.toFixed(1)}%`;
 }

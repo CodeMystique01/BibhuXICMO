@@ -52,6 +52,8 @@ export async function updateWorkspaceAction(
         ? {
             voiceProfile: Prisma.DbNull,
             cmoLlmSnapshot: Prisma.DbNull,
+            ahrefsSnapshot: Prisma.DbNull,
+            ahrefsSnapshotAt: null,
           }
         : {}),
     },

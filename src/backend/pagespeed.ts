@@ -17,7 +17,10 @@ export type PageSpeedResult = {
 };
 
 const ENDPOINT = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed";
-const TIMEOUT_MS = 18_000;
+// Mobile Lighthouse is meaningfully slower than desktop (CPU/network emulation).
+// 18s was too tight — desktop would complete and mobile would silently abort,
+// which is exactly the "desktop scored, mobile blank" symptom users saw.
+const TIMEOUT_MS = 35_000;
 const CATEGORIES = ["performance", "accessibility", "best-practices", "seo"] as const;
 
 type ApiResponse = {
