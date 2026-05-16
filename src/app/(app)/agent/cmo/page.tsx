@@ -67,26 +67,24 @@ export default async function CmoAgentPage() {
 
       <TerminalPanel lines={terminalLines} />
 
+      {/* 4-col layout: Company | Analytics | Actions | Chat (always visible on the right) */}
       <div className="grid gap-5 xl:grid-cols-12">
         <div className="xl:col-span-3">
           <Suspense fallback={<CompanyPanel data={fast} />}>
             <CompanyPanelWithLive fast={fast} workspaceId={workspace.id} />
           </Suspense>
         </div>
-        <div className="xl:col-span-5">
+        <div className="xl:col-span-3">
           <Suspense fallback={<AnalyticsSkeleton />}>
             <AnalyticsPanelStreamed fast={fast} workspaceId={workspace.id} />
           </Suspense>
         </div>
-        <div className="xl:col-span-4 flex flex-col gap-5">
+        <div className="xl:col-span-3 flex flex-col gap-5">
           <Suspense fallback={<ActionsFeed items={fast.openActions} plan={plan} />}>
             <ActionsFeedStreamed fast={fast} workspaceId={workspace.id} plan={plan} />
           </Suspense>
         </div>
-      </div>
-
-      <div className="grid gap-5 xl:grid-cols-12">
-        <div className="xl:col-span-12">
+        <div className="xl:col-span-3 min-h-[640px]">
           <ChatDock workspaceName={workspace.name} llmConfigured={llmConfigured} />
         </div>
       </div>
