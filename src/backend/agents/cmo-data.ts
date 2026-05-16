@@ -28,6 +28,7 @@ import {
 } from "@/backend/pipelines/cmo-llm-analysis.pipeline";
 import { strategyPipeline } from "@/backend/pipelines/strategy.pipeline";
 import { extractSocialHandles } from "@/backend/social-extractor";
+import { pickAvailableModel } from "@/backend/llm";
 
 export type { CmoLlmAnalysis };
 
@@ -172,6 +173,26 @@ export async function loadCmoFastData(args: {
   ahrefsSnapshotAt?: Date | null;
 }): Promise<CmoFastData> {
   const voice = (args.voiceProfile ?? null) as CmoVoiceProfile | null;
+
+  // Auto-resolve stale onboarding actions whose precondition is now satisfied.
+  // Most common case: "Add a working LLM API key" gets seeded during onboarding
+  // when no provider was configured; the action sits forever even after the
+  // user wires Anthropic/OpenAI/etc. Mark it DONE so the actions feed
+  // doesn't keep nagging.
+  if (pickAvailableModel() != null) {
+    try {
+      await prisma.actionItem.updateMany({
+        where: {
+          workspaceId: args.workspaceId,
+          status: "OPEN",
+          title: "Add a working LLM API key",
+        },
+        data: { status: "DONE" },
+      });
+    } catch {
+      // non-fatal — better to render the dashboard than fail it for cleanup.
+    }
+  }
 
   const [
     integrations,

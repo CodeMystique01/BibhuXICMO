@@ -143,26 +143,49 @@ export class StrategyPipeline {
             : ["product", "features", "pricing"],
         },
       ],
-      firstActions: [
-        {
-          title: "Add a working LLM API key",
-          reason:
-            "Set ANTHROPIC_API_KEY (preferred) or OPENAI_API_KEY with billing credits, then re-run the SEO agent to populate competitors, positioning, and topic clusters.",
-          priority: "high",
-        },
-        {
-          title: "Connect Google Search Console",
-          reason: "Unlock keyword and ranking data for the SEO agent.",
-          priority: "high",
-        },
-        {
-          title: "Add target subreddits",
-          reason: "Let the Reddit agent start monitoring community threads.",
-          priority: "medium",
-        },
-      ],
+      firstActions: buildFallbackFirstActions(),
     };
   }
 }
 
 export const strategyPipeline = new StrategyPipeline();
+
+/**
+ * Onboarding suggestions seeded when the strategy LLM call fails. We
+ * intentionally OMIT the "Add a working LLM API key" item when a provider
+ * key is already configured server-side — otherwise users land on the
+ * dashboard with a permanently misleading nag even though their key is
+ * fine. (Failures in that case are almost always content / network related,
+ * not credential related.)
+ */
+function buildFallbackFirstActions(): Array<{
+  title: string;
+  reason: string;
+  priority: "high" | "medium" | "low";
+}> {
+  const out: Array<{ title: string; reason: string; priority: "high" | "medium" | "low" }> = [];
+  const llmKeyMissing =
+    !process.env.ANTHROPIC_API_KEY &&
+    !process.env.OPENAI_API_KEY &&
+    !process.env.GOOGLE_GEMINI_API_KEY &&
+    !process.env.OPENROUTER_API_KEY;
+  if (llmKeyMissing) {
+    out.push({
+      title: "Add a working LLM API key",
+      reason:
+        "Set ANTHROPIC_API_KEY (preferred) or OPENAI_API_KEY with billing credits, then re-run the SEO agent.",
+      priority: "high",
+    });
+  }
+  out.push({
+    title: "Connect Google Search Console",
+    reason: "Unlock keyword and ranking data for the SEO agent.",
+    priority: "high",
+  });
+  out.push({
+    title: "Add target subreddits",
+    reason: "Let the Reddit agent start monitoring community threads.",
+    priority: "medium",
+  });
+  return out;
+}

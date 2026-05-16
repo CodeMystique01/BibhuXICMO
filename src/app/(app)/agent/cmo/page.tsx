@@ -187,9 +187,15 @@ function AnalyticsSkeleton() {
   return (
     <Card className="flex h-full flex-col">
       <CardHeader className="space-y-2 pb-3">
-        <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
-          <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-          Loading live homepage, integrations, and AI analysis…
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+            Loading site signals (typically 30–60s on first run)
+          </div>
+          <p className="text-[11px] text-muted-foreground/80">
+            Scraping homepage · running Google Lighthouse · fetching Ahrefs (DR, traffic, keywords) · running Claude strategy analysis.
+            Results are cached for 24h so the next load is instant.
+          </p>
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
