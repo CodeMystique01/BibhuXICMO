@@ -37,7 +37,10 @@ services:
     runtime: node
     plan: free
     region: oregon              # change to "frankfurt" or "singapore" if closer to you
-    buildCommand: npm install && npm run build
+    # Render sets NODE_ENV=production which makes `npm install` skip
+    # devDependencies. tailwindcss/postcss/autoprefixer live there and are
+    # needed at build time, so force-include dev deps just for the build.
+    buildCommand: npm install --include=dev && npm run build
     # `prisma db push` runs in startCommand (instead of preDeployCommand)
     # so the free tier is happy — pre-deploy hooks are paid-only on Render.
     # The push is idempotent, so re-running on every cold start is safe.
