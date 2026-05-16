@@ -1,0 +1,463 @@
+// AI CMO — Prisma schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ===========================================================================
+//  Auth (NextAuth / Auth.js v5) — compatible with @auth/prisma-adapter
+// ===========================================================================
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  passwordHash  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts        Account[]
+  sessions        Session[]
+  memberships     WorkspaceMember[]
+  ownedWorkspaces Workspace[]       @relation("WorkspaceOwner")
+  chatSessions    ChatSession[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ===========================================================================
+//  Workspaces & membership
+// ===========================================================================
+
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+model Workspace {
+  id           String   @id @default(cuid())
+  name         String
+  slug         String   @unique
+  websiteUrl   String?
+  industry     String?
+  icp          String? // Ideal customer profile (free text)
+  voiceProfile Json? // brand voice, tone, style guide
+  /// Cached structured LLM analysis for /agent/cmo (homepage-only; refreshed when stale or URL changes).
+  cmoLlmSnapshot Json?
+  ownerUserId  String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  owner            User                @relation("WorkspaceOwner", fields: [ownerUserId], references: [id])
+  members          WorkspaceMember[]
+  subscription     Subscription?
+  creditEntries    CreditLedger[]
+  integrations     Integration[]
+  audits           SiteAudit[]
+  keywords         Keyword[]
+  geoQueries       GeoQuery[]
+  geoScores        GeoScoreSnapshot[]
+  redditThreads    RedditThread[]
+  contentDrafts    ContentDraft[]
+  actionItems      ActionItem[]
+  agentRuns        AgentRun[]
+  chatSessions     ChatSession[]
+  scheduledPosts   ScheduledPost[]
+}
+
+model WorkspaceMember {
+  id          String   @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        Role     @default(MEMBER)
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+}
+
+// ===========================================================================
+//  Billing / credits
+// ===========================================================================
+
+enum Plan {
+  FREE
+  MAX
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  TRIALING
+  PAST_DUE
+  CANCELED
+  INCOMPLETE
+  UNPAID
+}
+
+model Subscription {
+  id                   String             @id @default(cuid())
+  workspaceId          String             @unique
+  stripeCustomerId     String?            @unique
+  stripeSubscriptionId String?            @unique
+  plan                 Plan               @default(FREE)
+  status               SubscriptionStatus @default(ACTIVE)
+  currentPeriodEnd     DateTime?
+  cancelAtPeriodEnd    Boolean            @default(false)
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model CreditLedger {
+  id          String   @id @default(cuid())
+  workspaceId String
+  delta       Int // positive = grant, negative = usage
+  balance     Int // running balance after this entry
+  reason      String
+  model       String?
+  tokens      Int?
+  meta        Json?
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt])
+}
+
+// ===========================================================================
+//  Integrations (OAuth for external services)
+// ===========================================================================
+
+enum IntegrationProvider {
+  REDDIT
+  TWITTER
+  LINKEDIN
+  GOOGLE_SEARCH_CONSOLE
+  GOOGLE_ANALYTICS
+  GITHUB
+}
+
+model Integration {
+  id           String              @id @default(cuid())
+  workspaceId  String
+  provider     IntegrationProvider
+  accountId    String? // remote account id
+  accountLabel String? // human-readable account name/email
+  accessToken  String              @db.Text
+  refreshToken String?             @db.Text
+  scope        String?             @db.Text
+  expiresAt    DateTime?
+  meta         Json?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, provider])
+}
+
+// ===========================================================================
+//  SEO
+// ===========================================================================
+
+model SiteAudit {
+  id          String   @id @default(cuid())
+  workspaceId String
+  score       Int // 0-100
+  issues      Json // [{severity, category, title, fix, url}]
+  pages       Int      @default(0)
+  ranAt       DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, ranAt])
+}
+
+model Keyword {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  query        String
+  country      String   @default("us")
+  intent       String? // informational | navigational | commercial | transactional
+  volume       Int?
+  difficulty   Int?
+  trackedSince DateTime @default(now())
+
+  workspace Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  rankings  RankingSnapshot[]
+
+  @@unique([workspaceId, query, country])
+}
+
+model RankingSnapshot {
+  id        String   @id @default(cuid())
+  keywordId String
+  position  Int
+  url       String?
+  date      DateTime @default(now())
+
+  keyword Keyword @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+
+  @@index([keywordId, date])
+}
+
+// ===========================================================================
+//  GEO (Generative Engine Optimization)
+// ===========================================================================
+
+model GeoQuery {
+  id          String   @id @default(cuid())
+  workspaceId String
+  prompt      String   @db.Text
+  provider    String // openai | anthropic | perplexity | google
+  cited       Boolean  @default(false)
+  snippet     String?  @db.Text
+  rawResponse Json?
+  checkedAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, checkedAt])
+}
+
+model GeoScoreSnapshot {
+  id          String   @id @default(cuid())
+  workspaceId String
+  score       Int // 0-100
+  date        DateTime @default(now())
+  breakdown   Json? // per-provider score breakdown
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, date])
+}
+
+// ===========================================================================
+//  Community (Reddit, Hacker News)
+// ===========================================================================
+
+model RedditThread {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  externalId   String // e.g. t3_abc123
+  subreddit    String
+  title        String   @db.Text
+  permalink    String
+  score        Int      @default(0)
+  comments     Int      @default(0)
+  relevance    Float    @default(0) // 0..1
+  discoveredAt DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, externalId])
+  @@index([workspaceId, discoveredAt])
+}
+
+// ===========================================================================
+//  Content pipeline
+// ===========================================================================
+
+enum ContentStatus {
+  DRAFT
+  PENDING_APPROVAL
+  SCHEDULED
+  PUBLISHED
+  REJECTED
+  FAILED
+}
+
+enum ContentChannel {
+  BLOG
+  LANDING_PAGE
+  X
+  LINKEDIN
+  REDDIT
+  HACKER_NEWS
+  NEWSLETTER
+}
+
+model ContentDraft {
+  id          String         @id @default(cuid())
+  workspaceId String
+  agent       String // which agent produced it
+  channel     ContentChannel
+  title       String?
+  body        String         @db.Text
+  meta        Json? // platform-specific fields (subreddit, parent post, hashtags, etc.)
+  status      ContentStatus  @default(DRAFT)
+  scheduledAt DateTime?
+  publishedAt DateTime?
+  externalUrl String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  workspace      Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  scheduledPosts ScheduledPost[]
+
+  @@index([workspaceId, status])
+}
+
+model ScheduledPost {
+  id          String         @id @default(cuid())
+  workspaceId String
+  draftId     String
+  channel     ContentChannel
+  scheduledAt DateTime
+  processedAt DateTime?
+  status      String         @default("pending") // pending | posted | failed
+  error       String?        @db.Text
+
+  workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  draft     ContentDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+
+  @@index([scheduledAt, status])
+}
+
+// ===========================================================================
+//  Action items (the "daily suggestions" feed)
+// ===========================================================================
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum ActionStatus {
+  OPEN
+  DONE
+  DISMISSED
+  SNOOZED
+}
+
+model ActionItem {
+  id          String       @id @default(cuid())
+  workspaceId String
+  agent       String
+  type        String // 'seo.fix', 'reddit.reply', 'content.publish', etc.
+  title       String
+  summary     String?      @db.Text
+  cta         String? // label for primary action button
+  href        String? // deep link to details
+  priority    Priority     @default(MEDIUM)
+  status      ActionStatus @default(OPEN)
+  dueAt       DateTime?
+  meta        Json?
+  createdAt   DateTime     @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, status, priority])
+}
+
+// ===========================================================================
+//  Agent runs (execution log)
+// ===========================================================================
+
+enum AgentRunStatus {
+  RUNNING
+  SUCCESS
+  FAILED
+}
+
+model AgentRun {
+  id          String         @id @default(cuid())
+  workspaceId String
+  agent       String
+  status      AgentRunStatus @default(RUNNING)
+  input       Json?
+  output      Json?
+  error       String?        @db.Text
+  creditsUsed Int            @default(0)
+  startedAt   DateTime       @default(now())
+  finishedAt  DateTime?
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, agent, startedAt])
+}
+
+// ===========================================================================
+//  Private Chat
+// ===========================================================================
+
+model ChatSession {
+  id          String   @id @default(cuid())
+  userId      String
+  workspaceId String?
+  title       String?
+  model       String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace?    @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  messages  ChatMessage[]
+
+  @@index([userId, updatedAt])
+}
+
+model ChatMessage {
+  id          String   @id @default(cuid())
+  sessionId   String
+  role        String // 'user' | 'assistant' | 'system' | 'tool'
+  content     Json
+  attachments Json?
+  tokens      Int?
+  createdAt   DateTime @default(now())
+
+  session ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt])
+}

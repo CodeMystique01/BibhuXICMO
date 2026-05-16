@@ -1,0 +1,52 @@
+Category	Feature name	Okara.ai (expected URL pattern)	Xicmo URL path	Xicmo source file	Notes
+Marketing	Home landing	https://okara.ai/	/	src/app/(marketing)/page.tsx	Okara paths inferred from typical SaaS layout; verify on live okara.ai.
+Marketing	Pricing	https://okara.ai/pricing	/pricing	src/app/(marketing)/pricing/page.tsx	
+Marketing	Blog index	https://okara.ai/blog	/blog	src/app/(marketing)/blog/page.tsx	
+Marketing	Blog post	https://okara.ai/blog/{slug}	/blog/{slug}	src/app/(marketing)/blog/[slug]/page.tsx	Permanent redirect /blog/welcome-to-ai-cmo → /blog/welcome-to-xicmo in next.config.ts
+Marketing	Changelog	https://okara.ai/changelog	/changelog	src/app/(marketing)/changelog/page.tsx	
+Marketing	Help center	https://okara.ai/help	/help	src/app/(marketing)/help/page.tsx	
+Marketing	Help article	https://okara.ai/help/{slug}	/help/{slug}	src/app/(marketing)/help/[slug]/page.tsx	
+Marketing	Tools index	https://okara.ai/tools	/tools	src/app/(marketing)/tools/page.tsx	
+Marketing	Tool detail	https://okara.ai/tools/{slug}	/tools/{slug}	src/app/(marketing)/tools/[slug]/page.tsx	Slugs: chat-with-pdf, chat-with-youtube, chat-with-x, web-search, private-chat
+Marketing	Contact	https://okara.ai/contact	/contact	src/app/(marketing)/contact/page.tsx	
+Marketing	Careers	https://okara.ai/careers	/careers	src/app/(marketing)/careers/page.tsx	
+Marketing	Affiliates	https://okara.ai/affiliates	/affiliates	src/app/(marketing)/affiliates/page.tsx	
+Marketing	Privacy	https://okara.ai/privacy	/privacy	src/app/(marketing)/privacy/page.tsx	
+Marketing	Terms	https://okara.ai/terms	/terms	src/app/(marketing)/terms/page.tsx	
+Marketing	Refund	https://okara.ai/refund	/refund	src/app/(marketing)/refund/page.tsx	
+Auth	Login	https://okara.ai/login	/login	src/app/(auth)/login/page.tsx	
+Auth	Register	https://okara.ai/register	/register	src/app/(auth)/register/page.tsx	
+Auth	Forgot password	https://okara.ai/forgot	/forgot	src/app/(auth)/forgot/page.tsx	
+App	Onboarding	https://okara.ai/onboarding	/onboarding	src/app/onboarding/page.tsx	Protected: middleware + requireWorkspace
+App	Dashboard	https://okara.ai/dashboard	/dashboard	src/app/(app)/dashboard/page.tsx	
+App	Action items	https://okara.ai/actions	/actions	src/app/(app)/actions/page.tsx	
+App	Content library	https://okara.ai/content	/content	src/app/(app)/content/page.tsx	
+App	Content detail	https://okara.ai/content/{id}	/content/{id}	src/app/(app)/content/[id]/page.tsx	
+App	Private chat	https://okara.ai/chat	/chat	src/app/(app)/chat/page.tsx	
+App	Billing	https://okara.ai/billing	/billing	src/app/(app)/billing/page.tsx	
+App	Settings	https://okara.ai/settings	/settings	src/app/(app)/settings/page.tsx	
+App	Publish queue	https://okara.ai/queue	/queue	src/app/(app)/queue/page.tsx	
+App	Integrations hub	https://okara.ai/integrations	/integrations	src/app/(app)/integrations/page.tsx	
+App	GSC UI	https://okara.ai/integrations/gsc	/integrations/gsc	src/app/(app)/integrations/gsc/page.tsx	
+App	GA4 UI	https://okara.ai/integrations/ga4	/integrations/ga4	src/app/(app)/integrations/ga4/page.tsx	
+App	SEO agent	https://okara.ai/agents/seo	/agents/seo	src/app/(app)/agents/seo/page.tsx	
+App	GEO agent	https://okara.ai/agents/geo	/agents/geo	src/app/(app)/agents/geo/page.tsx	
+App	Content writer	https://okara.ai/agents/content	/agents/content	src/app/(app)/agents/content/page.tsx	
+App	Reddit agent	https://okara.ai/agents/reddit	/agents/reddit	src/app/(app)/agents/reddit/page.tsx	
+App	Hacker News agent	https://okara.ai/agents/hn	/agents/hn	src/app/(app)/agents/hn/page.tsx	
+App	X agent	https://okara.ai/agents/x	/agents/x	src/app/(app)/agents/x/page.tsx	
+App	LinkedIn agent	https://okara.ai/agents/linkedin	/agents/linkedin	src/app/(app)/agents/linkedin/page.tsx	
+App	Coding agent	https://okara.ai/agents/coding	/agents/coding	src/app/(app)/agents/coding/page.tsx	
+App	Agent runs (server action)	N/A	POST (server action)	src/app/(app)/agents/actions.ts	Triggered from agent UI (RunAgentButton etc.)
+API	NextAuth	https://okara.ai/api/auth/*	/api/auth/*	src/app/api/auth/[...nextauth]/route.ts	Session + Google/GitHub OAuth for login
+API	Chat	https://okara.ai/api/chat	/api/chat	src/app/api/chat/route.ts	POST streaming; credits + rate limit
+API	Stripe checkout	https://okara.ai/api/stripe/checkout	/api/stripe/checkout	src/app/api/stripe/checkout/route.ts	
+API	Stripe portal	https://okara.ai/api/stripe/portal	/api/stripe/portal	src/app/api/stripe/portal/route.ts	
+API	Stripe webhook	https://okara.ai/api/stripe/webhook	/api/stripe/webhook	src/app/api/stripe/webhook/route.ts	Configure in Stripe Dashboard
+API	Integration OAuth start	https://okara.ai/api/integrations/{provider}/start	/api/integrations/{provider}/start	src/app/api/integrations/[provider]/start/route.ts	Slugs: reddit, twitter, x, linkedin, google-search-console, gsc, google-analytics, ga4, github
+API	Integration OAuth callback	https://okara.ai/api/integrations/{provider}/callback	/api/integrations/{provider}/callback	src/app/api/integrations/[provider]/callback/route.ts	Register exact redirect URLs in each provider
+Worker	Background jobs	N/A	npm run worker	workers/index.ts	BullMQ: agents, publish, email — not a browser route
+Content	Blog markdown	N/A	N/A	content/blog/*.md	Read from repo root at runtime/build
+Content	Help markdown	N/A	N/A	content/help/*.md	
+Content	Changelog markdown	N/A	N/A	content/changelog/*.md	
+Infra	Auth middleware	N/A	N/A	src/middleware.ts	Protects dashboard, agents, chat, billing, settings, onboarding, integrations, actions, content, queue

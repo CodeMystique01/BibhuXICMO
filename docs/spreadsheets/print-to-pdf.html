@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Xicmo — Okara parity &amp; environment reference</title>
+  <style>
+    body { font-family: system-ui, Segoe UI, sans-serif; margin: 24px; color: #111; line-height: 1.45; }
+    h1 { font-size: 1.35rem; border-bottom: 2px solid #333; padding-bottom: 8px; }
+    h2 { font-size: 1.1rem; margin-top: 2rem; }
+    p.meta { color: #444; font-size: 0.9rem; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.78rem; margin: 12px 0 24px; page-break-inside: avoid; }
+    th, td { border: 1px solid #ccc; padding: 6px 8px; vertical-align: top; text-align: left; }
+    th { background: #f4f4f4; font-weight: 600; }
+    tr:nth-child(even) td { background: #fafafa; }
+    code { font-size: 0.85em; background: #eee; padding: 1px 4px; border-radius: 3px; }
+    .print-hint { background: #fff8e6; border: 1px solid #e6c200; padding: 10px 12px; border-radius: 6px; margin-bottom: 20px; }
+    @media print {
+      .print-hint { display: none; }
+      body { margin: 12mm; }
+      h2 { page-break-after: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="print-hint">
+    <strong>Save as PDF:</strong> Use your browser → Print → Destination: “Save as PDF”.  
+    Excel: open the <code>.tsv</code> files in this folder (double-click or Data → From Text) — tab-separated imports cleanly.
+  </div>
+
+  <h1>1. Okara.ai vs Xicmo — route &amp; surface parity</h1>
+  <p class="meta">Okara URLs use the pattern <code>https://okara.ai/…</code> as a parallel; confirm exact paths on the live Okara site. Xicmo paths are relative to your deployed origin (e.g. <code>https://xicmo.com</code>).</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Category</th>
+        <th>Feature</th>
+        <th>Okara.ai (expected)</th>
+        <th>Xicmo path</th>
+        <th>Xicmo file in repo</th>
+        <th>Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Marketing</td><td>Home</td><td>/</td><td>/</td><td>src/app/(marketing)/page.tsx</td><td></td></tr>
+      <tr><td>Marketing</td><td>Pricing</td><td>/pricing</td><td>/pricing</td><td>src/app/(marketing)/pricing/page.tsx</td><td></td></tr>
+      <tr><td>Marketing</td><td>Blog</td><td>/blog</td><td>/blog</td><td>src/app/(marketing)/blog/page.tsx</td><td></td></tr>
+      <tr><td>Marketing</td><td>Blog post</td><td>/blog/{slug}</td><td>/blog/{slug}</td><td>src/app/(marketing)/blog/[slug]/page.tsx</td><td>Redirect old welcome slug in next.config.ts</td></tr>
+      <tr><td>Marketing</td><td>Changelog</td><td>/changelog</td><td>/changelog</td><td>src/app/(marketing)/changelog/page.tsx</td><td></td></tr>
+      <tr><td>Marketing</td><td>Help</td><td>/help</td><td>/help</td><td>src/app/(marketing)/help/page.tsx</td><td></td></tr>
+      <tr><td>Marketing</td><td>Help article</td><td>/help/{slug}</td><td>/help/{slug}</td><td>src/app/(marketing)/help/[slug]/page.tsx</td><td></td></tr>
+      <tr><td>Marketing</td><td>Tools</td><td>/tools</td><td>/tools</td><td>src/app/(marketing)/tools/page.tsx</td><td></td></tr>
+      <tr><td>Marketing</td><td>Tool detail</td><td>/tools/{slug}</td><td>/tools/{slug}</td><td>src/app/(marketing)/tools/[slug]/page.tsx</td><td>chat-with-pdf, chat-with-youtube, chat-with-x, web-search, private-chat</td></tr>
+      <tr><td>Marketing</td><td>Contact</td><td>/contact</td><td>/contact</td><td>src/app/(marketing)/contact/page.tsx</td><td></td></tr>
+      <tr><td>Marketing</td><td>Careers</td><td>/careers</td><td>/careers</td><td>src/app/(marketing)/careers/page.tsx</td><td></td></tr>
+      <tr><td>Marketing</td><td>Affiliates</td><td>/affiliates</td><td>/affiliates</td><td>src/app/(marketing)/affiliates/page.tsx</td><td></td></tr>
+      <tr><td>Marketing</td><td>Privacy</td><td>/privacy</td><td>/privacy</td><td>src/app/(marketing)/privacy/page.tsx</td><td></td></tr>
+      <tr><td>Marketing</td><td>Terms</td><td>/terms</td><td>/terms</td><td>src/app/(marketing)/terms/page.tsx</td><td></td></tr>
+      <tr><td>Marketing</td><td>Refund</td><td>/refund</td><td>/refund</td><td>src/app/(marketing)/refund/page.tsx</td><td></td></tr>
+      <tr><td>Auth</td><td>Login</td><td>/login</td><td>/login</td><td>src/app/(auth)/login/page.tsx</td><td></td></tr>
+      <tr><td>Auth</td><td>Register</td><td>/register</td><td>/register</td><td>src/app/(auth)/register/page.tsx</td><td></td></tr>
+      <tr><td>Auth</td><td>Forgot</td><td>/forgot</td><td>/forgot</td><td>src/app/(auth)/forgot/page.tsx</td><td></td></tr>
+      <tr><td>App</td><td>Onboarding</td><td>/onboarding</td><td>/onboarding</td><td>src/app/onboarding/page.tsx</td><td>Protected</td></tr>
+      <tr><td>App</td><td>Dashboard</td><td>/dashboard</td><td>/dashboard</td><td>src/app/(app)/dashboard/page.tsx</td><td></td></tr>
+      <tr><td>App</td><td>Actions</td><td>/actions</td><td>/actions</td><td>src/app/(app)/actions/page.tsx</td><td></td></tr>
+      <tr><td>App</td><td>Content</td><td>/content</td><td>/content</td><td>src/app/(app)/content/page.tsx</td><td></td></tr>
+      <tr><td>App</td><td>Content detail</td><td>/content/{id}</td><td>/content/{id}</td><td>src/app/(app)/content/[id]/page.tsx</td><td></td></tr>
+      <tr><td>App</td><td>Chat</td><td>/chat</td><td>/chat</td><td>src/app/(app)/chat/page.tsx</td><td></td></tr>
+      <tr><td>App</td><td>Billing</td><td>/billing</td><td>/billing</td><td>src/app/(app)/billing/page.tsx</td><td></td></tr>
+      <tr><td>App</td><td>Settings</td><td>/settings</td><td>/settings</td><td>src/app/(app)/settings/page.tsx</td><td></td></tr>
+      <tr><td>App</td><td>Queue</td><td>/queue</td><td>/queue</td><td>src/app/(app)/queue/page.tsx</td><td></td></tr>
+      <tr><td>App</td><td>Integrations</td><td>/integrations</td><td>/integrations</td><td>src/app/(app)/integrations/page.tsx</td><td></td></tr>
+      <tr><td>App</td><td>GSC</td><td>/integrations/gsc</td><td>/integrations/gsc</td><td>src/app/(app)/integrations/gsc/page.tsx</td><td></td></tr>
+      <tr><td>App</td><td>GA4</td><td>/integrations/ga4</td><td>/integrations/ga4</td><td>src/app/(app)/integrations/ga4/page.tsx</td><td></td></tr>
+      <tr><td>App</td><td>Agents</td><td>/agents/seo …</td><td>/agents/seo, /geo, /content, /reddit, /hn, /x, /linkedin, /coding</td><td>src/app/(app)/agents/*/page.tsx</td><td>One folder per agent</td></tr>
+      <tr><td>API</td><td>NextAuth</td><td>/api/auth/*</td><td>/api/auth/*</td><td>src/app/api/auth/[...nextauth]/route.ts</td><td></td></tr>
+      <tr><td>API</td><td>Chat</td><td>/api/chat</td><td>/api/chat</td><td>src/app/api/chat/route.ts</td><td>POST</td></tr>
+      <tr><td>API</td><td>Stripe</td><td>/api/stripe/checkout|portal|webhook</td><td>same</td><td>src/app/api/stripe/*/route.ts</td><td></td></tr>
+      <tr><td>API</td><td>Integrations OAuth</td><td>/api/integrations/{p}/start|callback</td><td>same</td><td>src/app/api/integrations/[provider]/*/route.ts</td><td>See providers.ts for slugs</td></tr>
+      <tr><td>Worker</td><td>BullMQ</td><td>N/A</td><td>npm run worker</td><td>workers/index.ts</td><td>Separate process</td></tr>
+      <tr><td>Content</td><td>MD files</td><td>N/A</td><td>N/A</td><td>content/blog, content/help, content/changelog</td><td>Repo root</td></tr>
+      <tr><td>Infra</td><td>Middleware</td><td>N/A</td><td>N/A</td><td>src/middleware.ts</td><td>Auth gate</td></tr>
+    </tbody>
+  </table>
+
+  <h1>2. What to provide &amp; where (API keys &amp; config)</h1>
+  <p class="meta">Put secrets in a <strong>.env</strong> file at the <strong>repository root</strong> (same folder as <code>package.json</code>). Copy from <code>.env.example</code>. Schema: <code>src/shared/env.ts</code>.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Variable</th>
+        <th>File</th>
+        <th>What to put</th>
+        <th>Where to get it</th>
+        <th>Used for</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td><code>NEXT_PUBLIC_APP_URL</code></td><td>.env</td><td>https://your-domain.com</td><td>Your deploy URL</td><td>Public URLs, OAuth</td></tr>
+      <tr><td><code>APP_URL</code></td><td>.env</td><td>Usually same as above</td><td>—</td><td>Stripe, emails, workers</td></tr>
+      <tr><td><code>DATABASE_URL</code></td><td>.env</td><td>PostgreSQL URL</td><td>Neon, RDS, or docker-compose</td><td>Prisma</td></tr>
+      <tr><td><code>REDIS_URL</code></td><td>.env</td><td>redis://…</td><td>Local Docker or Upstash</td><td>BullMQ</td></tr>
+      <tr><td><code>AUTH_SECRET</code></td><td>.env</td><td>Random secret</td><td><code>openssl rand -base64 32</code></td><td>Auth signing</td></tr>
+      <tr><td><code>GOOGLE_CLIENT_ID</code> / <code>SECRET</code></td><td>.env</td><td>OAuth credentials</td><td>Google Cloud Console</td><td>Sign in with Google</td></tr>
+      <tr><td><code>GITHUB_CLIENT_ID</code> / <code>SECRET</code></td><td>.env</td><td>OAuth App</td><td>GitHub Developer Settings</td><td>Sign in + GitHub integration</td></tr>
+      <tr><td><code>OPENAI_API_KEY</code></td><td>.env</td><td>sk-…</td><td>OpenAI</td><td>LLM features</td></tr>
+      <tr><td><code>ANTHROPIC_API_KEY</code></td><td>.env</td><td>API key</td><td>Anthropic Console</td><td>Claude</td></tr>
+      <tr><td><code>STRIPE_SECRET_KEY</code>, <code>WEBHOOK_SECRET</code>, <code>NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY</code>, <code>STRIPE_PRICE_MAX_MONTHLY</code></td><td>.env</td><td>Keys + Price ID</td><td>Stripe Dashboard</td><td>Billing</td></tr>
+      <tr><td><code>REDDIT_*</code></td><td>.env</td><td>Client ID/secret + User-Agent string</td><td>reddit.com/prefs/apps</td><td>Reddit</td></tr>
+      <tr><td><code>X_CLIENT_*</code></td><td>.env</td><td>OAuth2 client</td><td>X Developer Portal</td><td>X integration</td></tr>
+      <tr><td><code>LINKEDIN_CLIENT_*</code></td><td>.env</td><td>App credentials</td><td>LinkedIn Developers</td><td>LinkedIn</td></tr>
+      <tr><td><code>GSC_CLIENT_*</code></td><td>.env</td><td>Google OAuth (shared for GSC+GA4)</td><td>Google Cloud</td><td>Search Console + GA4</td></tr>
+      <tr><td><code>RESEND_API_KEY</code>, <code>EMAIL_FROM</code></td><td>.env</td><td>API key + verified from</td><td>Resend</td><td>Email</td></tr>
+      <tr><td><code>SENTRY_DSN</code></td><td>.env</td><td>Optional DSN</td><td>Sentry</td><td>Errors (optional wiring)</td></tr>
+      <tr><td colspan="5"><strong>OAuth redirect URLs to register in each provider</strong> (replace YOUR_DOMAIN): <code>https://YOUR_DOMAIN/api/auth/callback/google</code>, <code>…/github</code>, <code>https://YOUR_DOMAIN/api/integrations/reddit/callback</code>, <code>…/twitter/callback</code>, <code>…/linkedin/callback</code>, <code>…/gsc/callback</code>, <code>…/ga4/callback</code>, <code>…/github/callback</code> (integration).</td></tr>
+    </tbody>
+  </table>
+
+  <p class="meta">Generated for the Xicmo codebase. TSV sources: <code>parity-okara-vs-xicmo.tsv</code>, <code>env-and-secrets-guide.tsv</code> in this folder.</p>
+</body>
+</html>
