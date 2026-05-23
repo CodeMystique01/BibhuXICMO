@@ -7,6 +7,7 @@ import { stripeCheckoutReady, stripeWebhookReady } from "@/backend/stripe";
 import { BillingActions } from "./actions-client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/frontend/components/ui/card";
 import { Badge } from "@/frontend/components/ui/badge";
+import { getEffectivePlan } from "@/backend/plan";
 
 export const metadata = { title: "Billing" };
 
@@ -21,7 +22,7 @@ export default async function BillingPage() {
     }),
   ]);
 
-  const plan = workspace.subscription?.plan ?? "FREE";
+  const plan = getEffectivePlan(workspace.subscription);
   const subStatus = workspace.subscription?.status ?? "ACTIVE";
 
   return (

@@ -5,6 +5,7 @@ import { Button } from "@/frontend/components/ui/button";
 import { auth } from "@/backend/auth";
 import { prisma } from "@/backend/db";
 import { getBalance, FREE_PLAN_MONTHLY_CREDITS } from "@/backend/credits";
+import { getEffectivePlan } from "@/backend/plan";
 
 const TOOL_COPY: Record<
   string,
@@ -119,7 +120,7 @@ export default async function ToolDetailPage(props: {
     });
     if (ws) {
       credits = await getBalance(ws.id);
-      plan = (ws.subscription?.plan as "FREE" | "MAX") ?? "FREE";
+      plan = getEffectivePlan(ws.subscription);
     }
   }
 

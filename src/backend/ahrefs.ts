@@ -318,5 +318,17 @@ function mergeItems(
     }
   }
 
+  // Fallback: if Apify did not return an aggregate organicTraffic but we
+  // do have keyword-level traffic numbers, sum them so the dashboard tile
+  // shows something useful instead of '—'. Same logic powers the per-country
+  // estimates downstream.
+  if (snap.organicTraffic == null && snap.topKeywords.length > 0) {
+    const sum = snap.topKeywords.reduce(
+      (acc, k) => acc + (typeof k.traffic === 'number' ? k.traffic : 0),
+      0
+    );
+    if (sum > 0) snap.organicTraffic = sum;
+  }
+
   return snap;
 }

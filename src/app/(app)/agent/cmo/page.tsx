@@ -26,6 +26,7 @@ import {
 } from "@/frontend/components/ui/card";
 import { Skeleton } from "@/frontend/components/ui/skeleton";
 import { SITE_NAME } from "@/shared/site";
+import { getEffectivePlan } from "@/backend/plan";
 
 export const metadata = { title: "AI CMO" };
 export const dynamic = "force-dynamic";
@@ -35,7 +36,7 @@ export const maxDuration = 60;
 export default async function CmoAgentPage() {
   const { workspace } = await requireWorkspace();
   const credits = await getBalance(workspace.id);
-  const plan = workspace.subscription?.plan ?? "FREE";
+  const plan = getEffectivePlan(workspace.subscription);
 
   // Fast path: only DB queries (~50-200ms). Drives the entire shell so the
   // page paints instantly when navigating between tabs.

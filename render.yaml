@@ -119,3 +119,10 @@ services:
       # ----- Cron secret (used by the cron jobs you may add later) -----
       - key: CRON_SECRET
         generateValue: true
+
+      # ----- Dev unlock: keep everything open (no paywall / no credit caps) -----
+      # Remove or set to "0" once you turn on billing in production.
+      - key: XICMO_UNLOCK_ALL
+        value: "1"
+      - key: NEXT_PUBLIC_XICMO_UNLOCK_ALL
+        value: "1"

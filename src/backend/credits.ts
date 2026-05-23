@@ -8,6 +8,8 @@ export const MAX_PLAN_MONTHLY_CREDITS = 2000;
  * Credit cost per model call — denominated in "credits".
  * 1 credit ≈ 1 premium-model message or ~10 cheap-model messages.
  */
+import { isBillingEnabled } from "@/backend/plan";
+
 export const MODEL_CREDIT_COST: Record<string, number> = {
   "gpt-4o": 1,
   "gpt-4o-mini": 0.1,
@@ -69,6 +71,7 @@ export async function chargeCredits({
   tokens?: number;
   meta?: Record<string, unknown>;
 }): Promise<number> {
+  if (!isBillingEnabled()) return getBalance(workspaceId); // unlimited in dev / no-billing mode
   if (credits <= 0) return getBalance(workspaceId);
   // Ledger uses Int — MODEL_CREDIT_COST uses fractional “cheap” units; always bill whole credits.
   const debit = Math.max(1, Math.ceil(credits));
@@ -89,6 +92,7 @@ export async function chargeCredits({
 }
 
 export async function assertHasCredits(workspaceId: string, required = 1) {
+  if (!isBillingEnabled()) return; // dev / billing-disabled deployments are unlimited
   const bal = await getBalance(workspaceId);
   if (bal < required) {
     throw new CreditError(

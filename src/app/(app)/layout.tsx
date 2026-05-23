@@ -1,6 +1,7 @@
 import { requireWorkspace } from "@/backend/workspace";
 import { getBalance } from "@/backend/credits";
 import { AppShell } from "@/frontend/components/app/app-shell";
+import { getEffectivePlan } from "@/backend/plan";
 
 export default async function AppLayout({
   children,
@@ -13,7 +14,7 @@ export default async function AppLayout({
   // query on every server render.
   const { user, workspace } = await requireWorkspace();
   const credits = await getBalance(workspace.id);
-  const plan = workspace.subscription?.plan ?? "FREE";
+  const plan = getEffectivePlan(workspace.subscription);
 
   return (
     <AppShell

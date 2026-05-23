@@ -205,6 +205,8 @@ export function SiteAuditForm({
 
 function AuditResultCard({ result }: { result: SuccessResponse }) {
   const { score, metadata, issues, pageSpeed, moreIssues } = result;
+  // Dev unlock — render the full report inline instead of behind the blur paywall.
+  const unlocked = process.env.NEXT_PUBLIC_XICMO_UNLOCK_ALL === "1";
   const scoreColor =
     score >= 80
       ? "text-emerald-500"
@@ -234,8 +236,8 @@ function AuditResultCard({ result }: { result: SuccessResponse }) {
 
       <div className="relative mt-6">
         <div
-          aria-hidden
-          className="pointer-events-none select-none blur-md"
+          aria-hidden={!unlocked}
+          className={unlocked ? "" : "pointer-events-none select-none blur-md"}
         >
           {pageSpeed ? (
             <div className="grid grid-cols-2 gap-3">
@@ -310,7 +312,7 @@ function AuditResultCard({ result }: { result: SuccessResponse }) {
           </div>
         </div>
 
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-gradient-to-b from-card/30 via-card/70 to-card/90 backdrop-blur-[1px]">
+        {unlocked ? null : (<div className="absolute inset-0 z-10 flex items-center justify-center bg-gradient-to-b from-card/30 via-card/70 to-card/90 backdrop-blur-[1px]">
           <div className="mx-4 w-full max-w-sm rounded-2xl border bg-card/95 p-6 text-center shadow-xl ring-1 ring-border">
             <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
               <Lock className="h-5 w-5" aria-hidden />
@@ -340,7 +342,7 @@ function AuditResultCard({ result }: { result: SuccessResponse }) {
               </p>
             </div>
           </div>
-        </div>
+        </div>)}
       </div>
     </div>
   );
