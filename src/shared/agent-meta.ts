@@ -57,7 +57,8 @@ export const AGENT_META: Record<string, AgentMeta> = {
     id: "x",
     label: "X / Twitter",
     creditsApprox: 5,
-    description: "Daily post drafts, reply suggestions, thread builders.",
+    description:
+      "Daily tweet & thread drafts, Apify-powered reply scan, schedule + auto-publish via X OAuth.",
     href: "/agents/x",
   },
   linkedin: {

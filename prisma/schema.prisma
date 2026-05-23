@@ -108,6 +108,7 @@ model Workspace {
   geoScores        GeoScoreSnapshot[]
   redditThreads    RedditThread[]
   hnThreads        HNThread[]
+  xThreads         XThread[]
   contentDrafts    ContentDraft[]
   actionItems      ActionItem[]
   agentRuns        AgentRun[]
@@ -317,6 +318,25 @@ model HNThread {
   storyUrl     String?
   points       Int      @default(0)
   comments     Int      @default(0)
+  relevance    Float    @default(0)
+  discoveredAt DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, externalId])
+  @@index([workspaceId, discoveredAt])
+}
+
+model XThread {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  externalId   String // tweet id
+  authorHandle String
+  text         String   @db.Text
+  url          String
+  likes        Int      @default(0)
+  retweets     Int      @default(0)
+  replies      Int      @default(0)
   relevance    Float    @default(0)
   discoveredAt DateTime @default(now())
 

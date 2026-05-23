@@ -82,7 +82,12 @@ for (const agent of listAgents()) {
         select: { id: true },
       });
       for (const ws of workspaces) {
-        const input = agent.id === "hn" ? { mode: "scan" } : undefined;
+        const input =
+          agent.id === "hn"
+            ? { mode: "scan" }
+            : agent.id === "x"
+              ? { mode: "both" }
+              : undefined;
         await enqueueAgentRun(agent.id, ws.id, input);
       }
     });
@@ -101,6 +106,56 @@ cron.schedule("0 14 * * *", async () => {
   });
   for (const ws of workspaces) {
     await enqueueAgentRun("hn", ws.id, { mode: "posts" });
+  }
+});
+
+// X auto-publish — every 5 minutes, publish any due X drafts via OAuth.
+cron.schedule("*/5 * * * *", async () => {
+  const due = await prisma.scheduledPost.findMany({
+    where: {
+      status: "pending",
+      channel: "X",
+      scheduledAt: { lte: new Date() },
+    },
+    include: { draft: true, workspace: { include: { owner: true } } },
+    take: 50,
+  });
+  for (const sp of due) {
+    if (!sp.draft) continue;
+    try {
+      const res = await publishDraft(sp.workspaceId, sp.draftId);
+      if (res.ok) {
+        await prisma.scheduledPost.update({
+          where: { id: sp.id },
+          data: { status: "posted", processedAt: new Date() },
+        });
+        if (sp.workspace.owner.email) {
+          await emailQueue().add(`x-published:${sp.id}`, {
+            to: sp.workspace.owner.email,
+            subject: `${SITE_NAME} · Published your scheduled X post`,
+            html: `<p>Your X draft <strong>${sp.draft.title ?? "Untitled"}</strong> is live.</p>${res.url ? `<p><a href="${res.url}">View on X</a></p>` : ""}`,
+          });
+        }
+      } else {
+        await prisma.scheduledPost.update({
+          where: { id: sp.id },
+          data: {
+            status: "failed",
+            processedAt: new Date(),
+            error: res.error.slice(0, 1000),
+          },
+        });
+      }
+    } catch (err) {
+      await prisma.scheduledPost.update({
+        where: { id: sp.id },
+        data: {
+          status: "failed",
+          processedAt: new Date(),
+          error: (err instanceof Error ? err.message : String(err)).slice(0, 1000),
+        },
+      });
+    }
   }
 });
 

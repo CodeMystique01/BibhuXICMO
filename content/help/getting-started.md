@@ -16,6 +16,8 @@ After you sign up, you'll land on the onboarding wizard. Paste your website URL.
 
 The Integrations page lets you connect Reddit, X, LinkedIn, Google Search Console, and GA4. The **Hacker News agent** needs no API key — it searches via Algolia and drafts Show HN, Ask HN, and comments for you to submit manually on news.ycombinator.com.
 
+The **X / Twitter agent** posts via the free X OAuth tier (no paid X API needed). For tweet *discovery* (scanning buying-intent conversations to reply to), it uses Apify — set `APIFY_TOKEN` in your environment to enable it. Daily post drafts work without Apify.
+
 ## 3. Review your first Action Items
 
 Within a few minutes you'll see action items in the dashboard: keyword opportunities, Reddit threads with drafted replies, on-page SEO fixes, and a first blog post draft. Review, edit, and approve.

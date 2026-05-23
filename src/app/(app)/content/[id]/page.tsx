@@ -7,8 +7,10 @@ import { prisma } from "@/backend/db";
 import { renderMarkdown } from "@/backend/content";
 import { Badge } from "@/frontend/components/ui/badge";
 import { parseHnMeta } from "@/shared/hn";
+import { parseXMeta } from "@/shared/x";
 import { DraftActions } from "./actions-client";
 import { HNDraftActions } from "./hn-actions-client";
+import { XDraftActions } from "./x-actions-client";
 
 export default async function DraftPage(props: {
   params: Promise<{ id: string }>;
@@ -22,6 +24,7 @@ export default async function DraftPage(props: {
 
   const hnMeta =
     draft.channel === "HACKER_NEWS" ? parseHnMeta(draft.meta) : null;
+  const xMeta = draft.channel === "X" ? parseXMeta(draft.meta) : null;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -55,6 +58,10 @@ export default async function DraftPage(props: {
           title={draft.title}
           body={draft.body}
         />
+      ) : null}
+
+      {xMeta ? (
+        <XDraftActions draftId={draft.id} meta={xMeta} body={draft.body} />
       ) : null}
 
       <DraftActions id={draft.id} status={draft.status} />

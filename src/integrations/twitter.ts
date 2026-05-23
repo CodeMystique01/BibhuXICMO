@@ -42,12 +42,21 @@ export async function refreshTwitterToken(workspaceId: string): Promise<string |
   return json.access_token;
 }
 
+export type PostTweetOptions = {
+  /** Reply to a specific tweet id (sets reply.in_reply_to_tweet_id). */
+  replyTo?: string;
+};
+
 export async function postTweet(
   workspaceId: string,
-  text: string
+  text: string,
+  opts: PostTweetOptions = {}
 ): Promise<{ id: string; url: string } | null> {
   const token = await refreshTwitterToken(workspaceId);
   if (!token) return null;
+
+  const payload: Record<string, unknown> = { text };
+  if (opts.replyTo) payload.reply = { in_reply_to_tweet_id: opts.replyTo };
 
   const res = await fetch("https://api.twitter.com/2/tweets", {
     method: "POST",
@@ -55,17 +64,40 @@ export async function postTweet(
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify(payload),
   });
 
   if (!res.ok) {
-    throw new Error(`Tweet failed: ${res.status}`);
+    let detail = "";
+    try {
+      detail = await res.text();
+    } catch {
+      /* ignore */
+    }
+    throw new Error(`Tweet failed: ${res.status}${detail ? ` ${detail.slice(0, 200)}` : ""}`);
   }
   const json = (await res.json()) as { data: { id: string } };
   return {
     id: json.data.id,
     url: `https://twitter.com/i/web/status/${json.data.id}`,
   };
+}
+
+/** Fetch the authenticated user's @handle (for the integrations card). */
+export async function fetchAuthedHandle(
+  workspaceId: string
+): Promise<{ id: string; username: string } | null> {
+  const token = await refreshTwitterToken(workspaceId);
+  if (!token) return null;
+  const res = await fetch("https://api.twitter.com/2/users/me", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return null;
+  const json = (await res.json()) as {
+    data?: { id: string; username: string; name?: string };
+  };
+  if (!json.data) return null;
+  return { id: json.data.id, username: json.data.username };
 }
 
 export async function postThread(

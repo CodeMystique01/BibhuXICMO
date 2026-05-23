@@ -61,6 +61,12 @@ const envSchema = z.object({
    * `radeance/ahrefs-scraper` actor; override to swap providers.
    */
   APIFY_AHREFS_ACTOR_ID: z.string().default("radeance~ahrefs-scraper"),
+  /**
+   * Apify actor id for Twitter / X tweet search. Returns recent tweets
+   * matching a keyword query. Default actor: `apidojo/tweet-scraper`
+   * (~$0.40 per 1k tweets, no X API Basic required).
+   */
+  APIFY_X_ACTOR_ID: z.string().default("apidojo~tweet-scraper"),
 
   SENTRY_DSN: z.string().optional(),
 });
