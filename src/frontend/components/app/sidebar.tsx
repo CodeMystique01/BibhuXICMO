@@ -50,7 +50,7 @@ const AGENTS = [
   { href: "/agents/linkedin", label: "LinkedIn", icon: Linkedin },
   // Influencer + backlink modules — UI stubs for now, backend coming next.
   { href: "/agents/youtube-creators", label: "YT Creators", icon: Youtube },
-  { href: "/agents/instagram-influencers", label: "Insta Influencers", icon: Instagram },
+  { href: "/agents/instagram", label: "Insta Influencers", icon: Instagram },
   { href: "/agents/backlink-marketplace", label: "Backlink Marketplace", icon: Link2 },
 ];
 
