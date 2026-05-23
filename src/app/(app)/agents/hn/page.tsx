@@ -7,6 +7,7 @@ import { HNRunButtons } from "@/frontend/components/app/hn-run-buttons";
 import { Badge } from "@/frontend/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/frontend/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/frontend/components/ui/tabs";
+import { MIN_DISCOVERED_RELEVANCE } from "@/backend/agents/hn-keywords";
 import { parseHnMeta, hnKindLabel } from "@/shared/hn";
 
 export const metadata = { title: "Hacker News Agent" };
@@ -40,9 +41,12 @@ export default async function HNAgentPage() {
       take: 8,
     }),
     prisma.hNThread.findMany({
-      where: { workspaceId: workspace.id },
-      orderBy: { discoveredAt: "desc" },
-      take: 15,
+      where: {
+        workspaceId: workspace.id,
+        relevance: { gte: MIN_DISCOVERED_RELEVANCE },
+      },
+      orderBy: [{ relevance: "desc" }, { discoveredAt: "desc" }],
+      take: 20,
     }),
   ]);
 
@@ -91,7 +95,9 @@ export default async function HNAgentPage() {
           <Card>
             <CardHeader>
               <CardTitle>Discovered stories</CardTitle>
-              <CardDescription>Recent front-page and keyword matches.</CardDescription>
+              <CardDescription>
+                Keyword matches for your brand (≥40% relevance), highest first.
+              </CardDescription>
             </CardHeader>
             <CardContent>
               {threads.length === 0 ? (

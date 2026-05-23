@@ -10,13 +10,25 @@ import { AGENT_META } from "@/shared/agent-meta";
 
 function describeHNOutput(output: unknown): string {
   if (!output || typeof output !== "object") return "Run finished.";
-  const o = output as { surfaced?: number; generated?: number; message?: string };
+  const o = output as {
+    surfaced?: number;
+    generated?: number;
+    discovered?: number;
+    message?: string;
+  };
   const parts: string[] = [];
+  if (typeof o.discovered === "number") {
+    parts.push(
+      o.discovered === 0
+        ? "No relevant threads saved"
+        : `${o.discovered} relevant thread(s) in Discovered`
+    );
+  }
   if (typeof o.surfaced === "number") {
     parts.push(
       o.surfaced === 0
-        ? "No new comment drafts (threads may not match your niche yet)."
-        : `${o.surfaced} comment draft(s) created`
+        ? "No comment drafts"
+        : `${o.surfaced} comment draft(s)`
     );
   }
   if (typeof o.generated === "number") {
