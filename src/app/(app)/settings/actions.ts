@@ -61,13 +61,18 @@ export async function updateWorkspaceAction(
 
   if (urlChanged) {
     const { invalidateStaleHNDrafts } = await import("@/backend/agents/hn-stale");
-    await invalidateStaleHNDrafts(workspace.id, nextUrl);
+    const { invalidateStaleXDrafts } = await import("@/backend/agents/x-stale");
+    await Promise.all([
+      invalidateStaleHNDrafts(workspace.id, nextUrl),
+      invalidateStaleXDrafts(workspace.id, nextUrl),
+    ]);
   }
 
   revalidatePath("/settings");
   revalidatePath("/dashboard");
   revalidatePath("/agent/cmo");
   revalidatePath("/agents/hn");
+  revalidatePath("/agents/x");
   revalidatePath("/content");
   revalidatePath("/queue");
   return { ok: true as const, resetStrategy: urlChanged };

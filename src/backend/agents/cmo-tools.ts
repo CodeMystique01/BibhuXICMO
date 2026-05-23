@@ -13,7 +13,9 @@ import { fetchPage, normalizeUrl } from "@/backend/scraper/fetch";
 import { fetchPageSpeed } from "@/backend/pagespeed";
 import { searchReddit } from "@/integrations/reddit";
 import { searchHN } from "@/integrations/hackernews";
+import { apifySearchTweets, ApifyXNotConfiguredError } from "@/integrations/twitter-apify";
 import { runHNPostGeneration } from "@/backend/agents/hn";
+import { runXReplyScan, runXPostGeneration } from "@/backend/agents/x";
 import { executeAgent } from "@/backend/agents/base";
 import { seoAgent } from "@/backend/agents/seo";
 import { geoAgent } from "@/backend/agents/geo";
@@ -235,6 +237,106 @@ export function buildCmoTools(workspaceId: string) {
           return {
             ok: false,
             error: err instanceof Error ? err.message : "hn_posts_failed",
+          };
+        }
+      },
+    }),
+
+    find_x_threads: tool({
+      description:
+        "Search X (Twitter) via Apify for recent tweets matching a query. Use to surface buying-intent tweets or peer conversations worth replying to. Requires APIFY_TOKEN.",
+      parameters: z.object({
+        query: z.string(),
+        limit: z.number().int().min(1).max(25).default(10),
+        sort: z.enum(["Top", "Latest"]).default("Top"),
+      }),
+      execute: async ({ query, limit, sort }) => {
+        try {
+          const tweets = await apifySearchTweets(query, {
+            maxItems: limit,
+            sort,
+            sinceDays: 7,
+          });
+          return {
+            ok: true,
+            count: tweets.length,
+            tweets: tweets.slice(0, limit).map((t) => ({
+              author: `@${t.author.username}`,
+              text: t.text,
+              likes: t.metrics.likes,
+              retweets: t.metrics.retweets,
+              url: t.url,
+              createdAt: t.createdAt,
+            })),
+          };
+        } catch (err) {
+          if (err instanceof ApifyXNotConfiguredError) {
+            return {
+              ok: false,
+              error: "Apify is not configured. Set APIFY_TOKEN to enable X search.",
+            };
+          }
+          return {
+            ok: false,
+            error: err instanceof Error ? err.message : "x_search_failed",
+          };
+        }
+      },
+    }),
+
+    draft_x_reply: tool({
+      description:
+        "Scan recent tweets for buying-intent conversations and draft reply tweets in the brand voice. Saves drafts as PENDING_APPROVAL. Uses Apify for reads.",
+      parameters: z.object({}),
+      execute: async () => {
+        const workspace = await prisma.workspace.findUnique({
+          where: { id: workspaceId },
+        });
+        if (!workspace) return { ok: false, error: "workspace_not_found" };
+        const ctx = {
+          workspaceId,
+          websiteUrl: workspace.websiteUrl,
+          industry: workspace.industry,
+          icp: workspace.icp,
+          voiceProfile: workspace.voiceProfile,
+          preferredModel: CMO_PREFERRED_MODEL,
+        };
+        try {
+          const { surfaced, discovered, message } = await runXReplyScan(ctx);
+          return { ok: true, surfaced, discovered, message };
+        } catch (err) {
+          return {
+            ok: false,
+            error: err instanceof Error ? err.message : "x_reply_scan_failed",
+          };
+        }
+      },
+    }),
+
+    draft_x_daily: tool({
+      description:
+        "Generate today's tweet + thread drafts for this workspace's website (in brand voice). Saved as PENDING_APPROVAL.",
+      parameters: z.object({}),
+      execute: async () => {
+        const workspace = await prisma.workspace.findUnique({
+          where: { id: workspaceId },
+        });
+        if (!workspace) return { ok: false, error: "workspace_not_found" };
+        const ctx = {
+          workspaceId,
+          websiteUrl: workspace.websiteUrl,
+          industry: workspace.industry,
+          icp: workspace.icp,
+          voiceProfile: workspace.voiceProfile,
+          preferredModel: CMO_PREFERRED_MODEL,
+        };
+        try {
+          const { drafts, message } = await runXPostGeneration(ctx, { force: true });
+          return { ok: true, drafts, message };
+        } catch (err) {
+          return {
+            ok: false,
+            error: err instanceof Error ? err.message : "x_daily_failed",
           };
         }
       },

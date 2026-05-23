@@ -38,9 +38,14 @@ export async function publishDraft(
         break;
       }
       case "X": {
+        const xKind = meta.xKind as string | undefined;
         const mode = meta.mode as string | undefined;
         const tweets = (meta.tweets as string[] | undefined) ?? [draft.body];
-        if (mode === "thread" && tweets.length > 1) {
+        const parentTweetId = meta.parentTweetId as string | undefined;
+        if (xKind === "reply" && parentTweetId) {
+          const res = await postTweet(workspaceId, tweets[0], { replyTo: parentTweetId });
+          externalUrl = res?.url;
+        } else if ((xKind === "thread" || mode === "thread") && tweets.length > 1) {
           const res = await postThread(workspaceId, tweets);
           externalUrl = res?.urls[0];
         } else {

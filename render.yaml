@@ -80,11 +80,19 @@ services:
       - key: OPENROUTER_API_KEY
         sync: false
 
-      # ----- Apify (Ahrefs scraper) -----
+      # ----- Apify (Ahrefs scraper + X tweet search) -----
       - key: APIFY_TOKEN
         sync: false
       - key: APIFY_AHREFS_ACTOR_ID
         value: radeance~ahrefs-scraper
+      - key: APIFY_X_ACTOR_ID
+        value: apidojo~tweet-scraper
+
+      # ----- X / Twitter OAuth (for posting drafts) -----
+      - key: X_CLIENT_ID
+        sync: false
+      - key: X_CLIENT_SECRET
+        sync: false
 
       # ----- Google PageSpeed (free site-audit Lighthouse scores) -----
       - key: PAGESPEED_API_KEY
