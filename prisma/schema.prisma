@@ -109,6 +109,10 @@ model Workspace {
   redditThreads    RedditThread[]
   hnThreads        HNThread[]
   xThreads         XThread[]
+  igThreads        IGThread[]
+  igCreators       IGCreator[]
+  igCampaigns      IGCampaign[]
+  igNegotiations   IGNegotiation[]
   contentDrafts    ContentDraft[]
   actionItems      ActionItem[]
   agentRuns        AgentRun[]
@@ -190,6 +194,7 @@ enum IntegrationProvider {
   GOOGLE_SEARCH_CONSOLE
   GOOGLE_ANALYTICS
   GITHUB
+  INSTAGRAM
 }
 
 model Integration {
@@ -347,6 +352,108 @@ model XThread {
 }
 
 // ===========================================================================
+//  Instagram — content discovery, creator outreach, deal negotiation
+// ===========================================================================
+
+model IGThread {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  externalId   String // shortcode
+  authorHandle String
+  caption      String   @db.Text
+  mediaUrl     String?
+  permalink    String
+  likes        Int      @default(0)
+  comments     Int      @default(0)
+  relevance    Float    @default(0)
+  discoveredAt DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, externalId])
+  @@index([workspaceId, discoveredAt])
+}
+
+model IGCreator {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  handle          String
+  fullName        String?
+  bio             String?   @db.Text
+  followers       Int       @default(0)
+  engagementRate  Float?
+  niche           String?
+  profileUrl      String
+  fit             Float     @default(0) // 0–1 brand fit
+  notes           String?   @db.Text
+  lastDmAt        DateTime?
+  discoveredAt    DateTime  @default(now())
+
+  workspace    Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  negotiations IGNegotiation[]
+
+  @@unique([workspaceId, handle])
+  @@index([workspaceId, discoveredAt])
+}
+
+enum IGCampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  CLOSED
+}
+
+model IGCampaign {
+  id          String           @id @default(cuid())
+  workspaceId String
+  name        String
+  brand       String
+  budgetMin   Int              @default(0)
+  budgetMax   Int              @default(0)
+  brief       String?          @db.Text
+  status      IGCampaignStatus @default(DRAFT)
+  autopilot   Boolean          @default(false)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  workspace    Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  negotiations IGNegotiation[]
+
+  @@index([workspaceId, status])
+}
+
+enum IGNegotiationStatus {
+  PROSPECT
+  DM_SENT
+  REPLIED
+  NEGOTIATING
+  AGREED
+  DECLINED
+  CLOSED
+}
+
+model IGNegotiation {
+  id            String              @id @default(cuid())
+  workspaceId   String
+  campaignId    String
+  creatorId     String
+  status        IGNegotiationStatus @default(PROSPECT)
+  agreedPrice   Int?
+  autopilot     Boolean             @default(false)
+  lastMessageAt DateTime?
+  messages      Json? // [{role, text, sentAt, draftId?}]
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  workspace Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaign  IGCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  creator   IGCreator  @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, creatorId])
+  @@index([workspaceId, status])
+}
+
+// ===========================================================================
 //  Content pipeline
 // ===========================================================================
 
@@ -366,6 +473,7 @@ enum ContentChannel {
   LINKEDIN
   REDDIT
   HACKER_NEWS
+  INSTAGRAM
   NEWSLETTER
 }
 

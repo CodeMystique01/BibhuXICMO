@@ -21,6 +21,8 @@ const SLUG_MAP: Record<string, IntegrationProvider> = {
   "google-analytics": "GOOGLE_ANALYTICS",
   ga4: "GOOGLE_ANALYTICS",
   github: "GITHUB",
+  instagram: "INSTAGRAM",
+  ig: "INSTAGRAM",
 };
 
 export async function GET(

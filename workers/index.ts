@@ -87,7 +87,9 @@ for (const agent of listAgents()) {
             ? { mode: "scan" }
             : agent.id === "x"
               ? { mode: "both" }
-              : undefined;
+              : agent.id === "instagram"
+                ? { mode: "both" }
+                : undefined;
         await enqueueAgentRun(agent.id, ws.id, input);
       }
     });
@@ -109,12 +111,50 @@ cron.schedule("0 14 * * *", async () => {
   }
 });
 
-// X auto-publish — every 5 minutes, publish any due X drafts via OAuth.
+// Instagram comment scan — hourly, looks at the user's own recent posts.
+cron.schedule("0 * * * *", async () => {
+  const workspaces = await prisma.workspace.findMany({
+    where: {
+      integrations: { some: { provider: "INSTAGRAM" } },
+    },
+    select: { id: true },
+  });
+  for (const ws of workspaces) {
+    await enqueueAgentRun("instagram", ws.id, { mode: "comments" });
+  }
+});
+
+// Instagram negotiation autopilot — every 10 minutes.
+cron.schedule("*/10 * * * *", async () => {
+  try {
+    const workspaces = await prisma.workspace.findMany({
+      where: {
+        integrations: { some: { provider: "INSTAGRAM" } },
+        igNegotiations: {
+          some: {
+            autopilot: true,
+            status: { in: ["DM_SENT", "REPLIED", "NEGOTIATING"] },
+          },
+        },
+      },
+      select: { id: true },
+    });
+    for (const ws of workspaces) {
+      await enqueueAgentRun("instagram", ws.id, { mode: "negotiate" });
+    }
+  } catch (err) {
+    // IGNegotiation table may not exist yet pre-migration.
+    const code = (err as { code?: string })?.code;
+    if (code !== "P2021") console.warn("[cron] ig negotiation enqueue:", err);
+  }
+});
+
+// X / Instagram auto-publish — every 5 minutes, publish any due scheduled drafts.
 cron.schedule("*/5 * * * *", async () => {
   const due = await prisma.scheduledPost.findMany({
     where: {
       status: "pending",
-      channel: "X",
+      channel: { in: ["X", "INSTAGRAM"] },
       scheduledAt: { lte: new Date() },
     },
     include: { draft: true, workspace: { include: { owner: true } } },
@@ -130,10 +170,11 @@ cron.schedule("*/5 * * * *", async () => {
           data: { status: "posted", processedAt: new Date() },
         });
         if (sp.workspace.owner.email) {
-          await emailQueue().add(`x-published:${sp.id}`, {
+          const channelLabel = sp.channel === "INSTAGRAM" ? "Instagram" : "X";
+          await emailQueue().add(`auto-published:${sp.id}`, {
             to: sp.workspace.owner.email,
-            subject: `${SITE_NAME} · Published your scheduled X post`,
-            html: `<p>Your X draft <strong>${sp.draft.title ?? "Untitled"}</strong> is live.</p>${res.url ? `<p><a href="${res.url}">View on X</a></p>` : ""}`,
+            subject: `${SITE_NAME} · Published your scheduled ${channelLabel} post`,
+            html: `<p>Your ${channelLabel} draft <strong>${sp.draft.title ?? "Untitled"}</strong> is live.</p>${res.url ? `<p><a href="${res.url}">View</a></p>` : ""}`,
           });
         }
       } else {

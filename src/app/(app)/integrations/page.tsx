@@ -3,6 +3,7 @@ import { format } from "date-fns";
 import {
   MessageCircle,
   Hash,
+  Instagram,
   Linkedin,
   TrendingUp,
   BarChart3,
@@ -41,6 +42,14 @@ const PROVIDERS: Array<{
     name: "X / Twitter",
     description: "Generate and publish post + thread drafts to your X account.",
     icon: Hash,
+  },
+  {
+    provider: "INSTAGRAM",
+    slug: "instagram",
+    name: "Instagram",
+    description:
+      "Connect an Instagram Business / Creator account via Facebook Login. Required for auto-publishing Posts / Reels / Stories and scanning comments on your own posts.",
+    icon: Instagram,
   },
   {
     provider: "LINKEDIN",
@@ -182,5 +191,7 @@ function envKeyForProvider(p: IntegrationProvider): string {
       return "GSC_CLIENT_ID / GSC_CLIENT_SECRET";
     case "GITHUB":
       return "GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET";
+    case "INSTAGRAM":
+      return "FACEBOOK_CLIENT_ID / FACEBOOK_CLIENT_SECRET";
   }
 }

@@ -5,6 +5,7 @@ import { geoAgent } from "./geo";
 import { redditAgent } from "./reddit";
 import { hackerNewsAgent } from "./hn";
 import { xAgent } from "./x";
+import { instagramAgent } from "./instagram";
 import { linkedinAgent } from "./linkedin";
 import { codingAgent } from "./coding";
 
@@ -20,6 +21,7 @@ export const AGENT_REGISTRY: Record<string, Agent<unknown, unknown>> = {
   [redditAgent.id]: redditAgent as unknown as Agent<unknown, unknown>,
   [hackerNewsAgent.id]: hackerNewsAgent as unknown as Agent<unknown, unknown>,
   [xAgent.id]: xAgent as unknown as Agent<unknown, unknown>,
+  [instagramAgent.id]: instagramAgent as unknown as Agent<unknown, unknown>,
   [linkedinAgent.id]: linkedinAgent as unknown as Agent<unknown, unknown>,
   [codingAgent.id]: codingAgent as unknown as Agent<unknown, unknown>,
 };

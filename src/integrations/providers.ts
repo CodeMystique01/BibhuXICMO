@@ -75,6 +75,27 @@ export function getProviderConfig(
         scope: "repo read:user",
         tokenAuth: "body",
       };
+    case "INSTAGRAM":
+      // Instagram Business / Creator accounts authenticate through Facebook Login,
+      // not the deprecated Basic Display API. Scopes cover IG management + comments
+      // + publishing (Graph API v18+).
+      if (!env.FACEBOOK_CLIENT_ID || !env.FACEBOOK_CLIENT_SECRET) return null;
+      return {
+        provider,
+        clientId: env.FACEBOOK_CLIENT_ID,
+        clientSecret: env.FACEBOOK_CLIENT_SECRET,
+        authorizeUrl: "https://www.facebook.com/v18.0/dialog/oauth",
+        tokenUrl: "https://graph.facebook.com/v18.0/oauth/access_token",
+        scope: [
+          "instagram_basic",
+          "instagram_content_publish",
+          "instagram_manage_comments",
+          "instagram_manage_insights",
+          "pages_show_list",
+          "pages_read_engagement",
+        ].join(","),
+        tokenAuth: "body",
+      };
   }
 }
 

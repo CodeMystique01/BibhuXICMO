@@ -40,6 +40,10 @@ const envSchema = z.object({
   LINKEDIN_CLIENT_ID: z.string().optional(),
   LINKEDIN_CLIENT_SECRET: z.string().optional(),
 
+  /** Facebook OAuth — needed for Instagram Business / Creator account connect. */
+  FACEBOOK_CLIENT_ID: z.string().optional(),
+  FACEBOOK_CLIENT_SECRET: z.string().optional(),
+
   GSC_CLIENT_ID: z.string().optional(),
   GSC_CLIENT_SECRET: z.string().optional(),
   PAGESPEED_API_KEY: z.string().optional(),
@@ -74,6 +78,20 @@ const envSchema = z.object({
    * (~$0.40 per 1k tweets, no X API Basic required).
    */
   APIFY_X_ACTOR_ID: z.string().default("apidojo~tweet-scraper"),
+
+  /**
+   * Optional dedicated Apify token for the Instagram scraper. If set,
+   * the Instagram agent uses this token instead of APIFY_TOKEN — useful
+   * when you want IG and X/Ahrefs scraping to bill against separate
+   * Apify accounts. Falls back to APIFY_TOKEN when unset.
+   */
+  APIFY_IG_TOKEN: z.string().optional(),
+  /** Apify actor id for general Instagram profile/post scraping. */
+  APIFY_IG_ACTOR_ID: z.string().default("apify~instagram-scraper"),
+  /** Apify actor id for hashtag-keyed Instagram post discovery. */
+  APIFY_IG_HASHTAG_ACTOR_ID: z.string().default("apify~instagram-hashtag-scraper"),
+  /** Apify actor id for Instagram DM automation (uses session cookies). */
+  APIFY_IG_DM_ACTOR_ID: z.string().default("quickads~instagram-dm-automation"),
 
   SENTRY_DSN: z.string().optional(),
 });

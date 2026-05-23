@@ -39,7 +39,9 @@ export async function runAgentAction(agentId: string, input?: unknown) {
   try {
     const result = await withTimeout(
       executeAgent(agent, workspace.id, input ?? {}),
-      agentId === "hn" || agentId === "x" ? 170_000 : 60_000,
+      agentId === "hn" || agentId === "x" || agentId === "instagram"
+        ? 170_000
+        : 60_000,
       agent.title
     );
     revalidatePath(`/agents/${agentId}`);

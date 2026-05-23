@@ -99,6 +99,24 @@ services:
       - key: X_CLIENT_SECRET
         sync: false
 
+      # ----- Facebook Login (for Instagram Business connect) -----
+      # Required for Path A of the Instagram agent (Graph API posting + comments).
+      - key: FACEBOOK_CLIENT_ID
+        sync: false
+      - key: FACEBOOK_CLIENT_SECRET
+        sync: false
+
+      # ----- Apify Instagram scrapers (reads + DM automation) -----
+      # Optional dedicated token — falls back to APIFY_TOKEN.
+      - key: APIFY_IG_TOKEN
+        sync: false
+      - key: APIFY_IG_ACTOR_ID
+        value: apify~instagram-scraper
+      - key: APIFY_IG_HASHTAG_ACTOR_ID
+        value: apify~instagram-hashtag-scraper
+      - key: APIFY_IG_DM_ACTOR_ID
+        value: quickads~instagram-dm-automation
+
       # ----- Google PageSpeed (free site-audit Lighthouse scores) -----
       - key: PAGESPEED_API_KEY
         sync: false

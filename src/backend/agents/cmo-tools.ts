@@ -16,11 +16,19 @@ import { searchHN } from "@/integrations/hackernews";
 import { apifySearchTweets, ApifyXNotConfiguredError } from "@/integrations/twitter-apify";
 import { runHNPostGeneration } from "@/backend/agents/hn";
 import { runXReplyScan, runXPostGeneration } from "@/backend/agents/x";
+import {
+  runIGCommentScan,
+  runIGDiscover,
+  runIGPostGeneration,
+} from "@/backend/agents/instagram";
+import { runIGOutreach } from "@/backend/agents/instagram-outreach";
+import { discoverIGCreators } from "@/backend/agents/instagram-creators";
 import { executeAgent } from "@/backend/agents/base";
 import { seoAgent } from "@/backend/agents/seo";
 import { geoAgent } from "@/backend/agents/geo";
 import { contentAgent } from "@/backend/agents/content";
 import { xAgent } from "@/backend/agents/x";
+import { instagramAgent } from "@/backend/agents/instagram";
 import { linkedinAgent } from "@/backend/agents/linkedin";
 import { listGSCSites, querySearchAnalytics } from "@/integrations/google";
 import { CMO_PREFERRED_MODEL } from "@/backend/llm";
@@ -337,6 +345,220 @@ export function buildCmoTools(workspaceId: string) {
           return {
             ok: false,
             error: err instanceof Error ? err.message : "x_daily_failed",
+          };
+        }
+      },
+    }),
+
+    draft_ig_post: tool({
+      description:
+        "Draft a single Instagram feed-post caption + hashtags + visual prompt in the brand voice. Saved as DRAFT.",
+      parameters: z.object({
+        topic: z.string(),
+        angle: z.string().optional(),
+      }),
+      execute: async ({ topic, angle }) => {
+        return executeAgent(
+          instagramAgent,
+          workspaceId,
+          { topic, angle, igKind: "post" },
+          CMO_AGENT_OPTS
+        );
+      },
+    }),
+
+    draft_ig_reel: tool({
+      description:
+        "Draft an Instagram Reel — hook + caption + 15-30s scene-by-scene visual prompt. Saved as DRAFT.",
+      parameters: z.object({
+        topic: z.string(),
+        angle: z.string().optional(),
+      }),
+      execute: async ({ topic, angle }) => {
+        return executeAgent(
+          instagramAgent,
+          workspaceId,
+          { topic, angle, igKind: "reel" },
+          CMO_AGENT_OPTS
+        );
+      },
+    }),
+
+    scan_ig_comments: tool({
+      description:
+        "Scan the connected Instagram Business account's recent posts for new public comments and draft brand-voice replies for any that meet the relevance threshold. Requires Facebook/Instagram OAuth.",
+      parameters: z.object({}),
+      execute: async () => {
+        const workspace = await prisma.workspace.findUnique({
+          where: { id: workspaceId },
+        });
+        if (!workspace) return { ok: false, error: "workspace_not_found" };
+        const ctx = {
+          workspaceId,
+          websiteUrl: workspace.websiteUrl,
+          industry: workspace.industry,
+          icp: workspace.icp,
+          voiceProfile: workspace.voiceProfile,
+          preferredModel: CMO_PREFERRED_MODEL,
+        };
+        try {
+          const r = await runIGCommentScan(ctx);
+          return { ok: true, ...r };
+        } catch (err) {
+          return {
+            ok: false,
+            error: err instanceof Error ? err.message : "ig_comments_failed",
+          };
+        }
+      },
+    }),
+
+    find_ig_creators: tool({
+      description:
+        "Use Apify to discover Instagram creators / influencers in the brand's niche and score them for brand fit. Returns a ranked list; nothing is sent.",
+      parameters: z.object({
+        limit: z.number().int().min(1).max(20).default(10),
+      }),
+      execute: async ({ limit }) => {
+        const workspace = await prisma.workspace.findUnique({
+          where: { id: workspaceId },
+        });
+        if (!workspace) return { ok: false, error: "workspace_not_found" };
+        const ctx = {
+          workspaceId,
+          websiteUrl: workspace.websiteUrl,
+          industry: workspace.industry,
+          icp: workspace.icp,
+          voiceProfile: workspace.voiceProfile,
+          preferredModel: CMO_PREFERRED_MODEL,
+        };
+        try {
+          const { ranked, niche, scanned, error } = await discoverIGCreators(
+            ctx,
+            ctx.voiceProfile as { positioning?: string } | null
+          );
+          if (error) return { ok: false, error };
+          return {
+            ok: true,
+            niche,
+            scanned,
+            creators: ranked.slice(0, limit).map((r) => ({
+              handle: `@${r.profile.handle}`,
+              followers: r.profile.followers,
+              fit: Math.round(r.fit * 100),
+              niche: r.niche,
+              notes: r.notes,
+              profileUrl: r.profile.profileUrl,
+            })),
+          };
+        } catch (err) {
+          return {
+            ok: false,
+            error: err instanceof Error ? err.message : "ig_creators_failed",
+          };
+        }
+      },
+    }),
+
+    start_ig_outreach_campaign: tool({
+      description:
+        "Create an outreach campaign and immediately discover + draft first-DMs for top-fit creators. Drafts are PENDING_APPROVAL — nothing is sent without the user accepting.",
+      parameters: z.object({
+        name: z.string(),
+        brand: z.string(),
+        budgetMin: z.number().int().min(0).default(100),
+        budgetMax: z.number().int().min(0).default(500),
+        brief: z.string().optional(),
+      }),
+      execute: async ({ name, brand, budgetMin, budgetMax, brief }) => {
+        const workspace = await prisma.workspace.findUnique({
+          where: { id: workspaceId },
+        });
+        if (!workspace) return { ok: false, error: "workspace_not_found" };
+        try {
+          const campaign = await prisma.iGCampaign.create({
+            data: {
+              workspaceId,
+              name,
+              brand,
+              budgetMin,
+              budgetMax,
+              brief,
+              status: "ACTIVE",
+            },
+          });
+          const ctx = {
+            workspaceId,
+            websiteUrl: workspace.websiteUrl,
+            industry: workspace.industry,
+            icp: workspace.icp,
+            voiceProfile: workspace.voiceProfile,
+            preferredModel: CMO_PREFERRED_MODEL,
+          };
+          const r = await runIGOutreach(ctx, { campaignId: campaign.id });
+          return { ok: true, campaignId: campaign.id, ...r };
+        } catch (err) {
+          return {
+            ok: false,
+            error: err instanceof Error ? err.message : "ig_outreach_failed",
+          };
+        }
+      },
+    }),
+
+    draft_ig_daily: tool({
+      description:
+        "Generate today's Instagram Post + Reel + Story drafts for the workspace's brand. Saved as PENDING_APPROVAL.",
+      parameters: z.object({}),
+      execute: async () => {
+        const workspace = await prisma.workspace.findUnique({
+          where: { id: workspaceId },
+        });
+        if (!workspace) return { ok: false, error: "workspace_not_found" };
+        const ctx = {
+          workspaceId,
+          websiteUrl: workspace.websiteUrl,
+          industry: workspace.industry,
+          icp: workspace.icp,
+          voiceProfile: workspace.voiceProfile,
+          preferredModel: CMO_PREFERRED_MODEL,
+        };
+        try {
+          const r = await runIGPostGeneration(ctx, { force: true });
+          return { ok: true, ...r };
+        } catch (err) {
+          return {
+            ok: false,
+            error: err instanceof Error ? err.message : "ig_daily_failed",
+          };
+        }
+      },
+    }),
+
+    discover_ig_posts: tool({
+      description:
+        "Apify hashtag-driven discovery: find Instagram posts in the brand's niche worth commenting on. Returns posts saved under Discovered.",
+      parameters: z.object({}),
+      execute: async () => {
+        const workspace = await prisma.workspace.findUnique({
+          where: { id: workspaceId },
+        });
+        if (!workspace) return { ok: false, error: "workspace_not_found" };
+        const ctx = {
+          workspaceId,
+          websiteUrl: workspace.websiteUrl,
+          industry: workspace.industry,
+          icp: workspace.icp,
+          voiceProfile: workspace.voiceProfile,
+          preferredModel: CMO_PREFERRED_MODEL,
+        };
+        try {
+          const r = await runIGDiscover(ctx);
+          return { ok: true, ...r };
+        } catch (err) {
+          return {
+            ok: false,
+            error: err instanceof Error ? err.message : "ig_discover_failed",
           };
         }
       },

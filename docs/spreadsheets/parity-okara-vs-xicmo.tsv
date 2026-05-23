@@ -35,6 +35,7 @@ App	Content writer	https://okara.ai/agents/content	/agents/content	src/app/(app)
 App	Reddit agent	https://okara.ai/agents/reddit	/agents/reddit	src/app/(app)/agents/reddit/page.tsx	
 App	Hacker News agent	https://okara.ai/agents/hn	/agents/hn	src/app/(app)/agents/hn/page.tsx	Parity: comment scan + Show/Ask daily drafts, regenerate, assisted submit (no HN API key; Algolia search only)	
 App	X agent	https://okara.ai/agents/x	/agents/x	src/app/(app)/agents/x/page.tsx	Parity: daily single + thread drafts, Apify-powered reply scan, regenerate, schedule peak (auto-publishes via X OAuth)
+App	Instagram agent	https://okara.ai/agents/instagram	/agents/instagram	src/app/(app)/agents/instagram/page.tsx	Beyond parity: Path A (Graph API) — daily Post/Reel/Story drafts, comment replies, hashtag discovery; Path B (Apify, opt-in) — influencer discovery + AI DM negotiation autopilot with budget/throttle guards. Needs FACEBOOK_CLIENT_ID/SECRET; Path B needs APIFY_TOKEN (or APIFY_IG_TOKEN) and encrypted IG cookies.
 App	LinkedIn agent	https://okara.ai/agents/linkedin	/agents/linkedin	src/app/(app)/agents/linkedin/page.tsx	
 App	Coding agent	https://okara.ai/agents/coding	/agents/coding	src/app/(app)/agents/coding/page.tsx	
 App	Agent runs (server action)	N/A	POST (server action)	src/app/(app)/agents/actions.ts	Triggered from agent UI (RunAgentButton etc.)

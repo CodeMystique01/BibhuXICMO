@@ -62,9 +62,13 @@ export async function updateWorkspaceAction(
   if (urlChanged) {
     const { invalidateStaleHNDrafts } = await import("@/backend/agents/hn-stale");
     const { invalidateStaleXDrafts } = await import("@/backend/agents/x-stale");
+    const { invalidateStaleIGDrafts } = await import(
+      "@/backend/agents/instagram-stale"
+    );
     await Promise.all([
       invalidateStaleHNDrafts(workspace.id, nextUrl),
       invalidateStaleXDrafts(workspace.id, nextUrl),
+      invalidateStaleIGDrafts(workspace.id, nextUrl),
     ]);
   }
 
