@@ -126,3 +126,42 @@ services:
         value: "1"
       - key: NEXT_PUBLIC_XICMO_UNLOCK_ALL
         value: "1"
+
+      # ----- Where the Python Reddit Sales Agent backend lives -----
+      # Filled in automatically after the second service deploys; the
+      # Next.js Reddit page reads this to talk to the FastAPI backend.
+      - key: NEXT_PUBLIC_REDDIT_AGENT_URL
+        sync: false
+
+  # ------------------------------------------------------------------
+  # Python FastAPI backend that powers the /agents/reddit-sales module.
+  # Lives in /reddit-agent/backend, separate runtime from xicmo-web so a
+  # Reddit scrape that hangs doesn't take the Next.js app with it.
+  # ------------------------------------------------------------------
+  - type: web
+    name: reddit-agent
+    runtime: python
+    plan: free
+    region: oregon
+    rootDir: reddit-agent
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: >-
+      cd backend &&
+      python -m uvicorn main:app
+      --host 0.0.0.0
+      --port $PORT
+      --proxy-headers
+      --forwarded-allow-ips=*
+      --timeout-keep-alive 75
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: ANTHROPIC_MODEL
+        value: claude-sonnet-4-6
+      - key: APIFY_ACTOR_ID
+        value: trudax~reddit-scraper-lite
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: APIFY_TOKEN_REDDIT
+        sync: false

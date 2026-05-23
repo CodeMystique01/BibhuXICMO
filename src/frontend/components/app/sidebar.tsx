@@ -44,7 +44,7 @@ const AGENTS = [
   { href: "/agents/seo", label: "SEO", icon: Search },
   { href: "/agents/geo", label: "GEO", icon: Sparkles },
   { href: "/agents/content", label: "Content Writer", icon: FileText },
-  { href: "/agents/reddit", label: "Reddit", icon: MessageCircle },
+  { href: "/agents/reddit-sales", label: "Reddit Sales", icon: MessageCircle },
   { href: "/agents/hn", label: "Hacker News", icon: Newspaper },
   { href: "/agents/x", label: "X / Twitter", icon: Hash },
   { href: "/agents/linkedin", label: "LinkedIn", icon: Linkedin },

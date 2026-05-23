@@ -71,6 +71,11 @@ const envSchema = z.object({
   /** Client-side mirror of XICMO_UNLOCK_ALL. Required for paywall overlays
    *  that live in client components and can't read server env vars. */
   NEXT_PUBLIC_XICMO_UNLOCK_ALL: z.string().optional(),
+
+  /** Public URL of the Python Reddit Sales Agent FastAPI service
+   *  (e.g. https://reddit-agent.onrender.com). Read client-side by the
+   *  Reddit page to issue analyze / threads / posts requests. */
+  NEXT_PUBLIC_REDDIT_AGENT_URL: z.string().url().optional(),
 });
 
 /** Vercel sets VERCEL_URL (no scheme); derive public URLs when app env is unset. */
