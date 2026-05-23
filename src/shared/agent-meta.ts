@@ -49,7 +49,8 @@ export const AGENT_META: Record<string, AgentMeta> = {
     id: "hn",
     label: "Hacker News",
     creditsApprox: 4,
-    description: "Surface relevant HN threads and Show HN opportunities.",
+    description:
+      "Daily Show HN & Ask HN drafts, thread discovery, and comment suggestions — no HN API key.",
     href: "/agents/hn",
   },
   x: {

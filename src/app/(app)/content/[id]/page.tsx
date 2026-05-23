@@ -6,7 +6,9 @@ import { requireWorkspace } from "@/backend/workspace";
 import { prisma } from "@/backend/db";
 import { renderMarkdown } from "@/backend/content";
 import { Badge } from "@/frontend/components/ui/badge";
+import { parseHnMeta } from "@/shared/hn";
 import { DraftActions } from "./actions-client";
+import { HNDraftActions } from "./hn-actions-client";
 
 export default async function DraftPage(props: {
   params: Promise<{ id: string }>;
@@ -17,6 +19,9 @@ export default async function DraftPage(props: {
     where: { id, workspaceId: workspace.id },
   });
   if (!draft) notFound();
+
+  const hnMeta =
+    draft.channel === "HACKER_NEWS" ? parseHnMeta(draft.meta) : null;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -42,6 +47,15 @@ export default async function DraftPage(props: {
       <h1 className="text-4xl font-semibold tracking-tight">
         {draft.title || "Untitled draft"}
       </h1>
+
+      {hnMeta ? (
+        <HNDraftActions
+          draftId={draft.id}
+          meta={hnMeta}
+          title={draft.title}
+          body={draft.body}
+        />
+      ) : null}
 
       <DraftActions id={draft.id} status={draft.status} />
 

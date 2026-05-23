@@ -107,6 +107,7 @@ model Workspace {
   geoQueries       GeoQuery[]
   geoScores        GeoScoreSnapshot[]
   redditThreads    RedditThread[]
+  hnThreads        HNThread[]
   contentDrafts    ContentDraft[]
   actionItems      ActionItem[]
   agentRuns        AgentRun[]
@@ -299,6 +300,24 @@ model RedditThread {
   score        Int      @default(0)
   comments     Int      @default(0)
   relevance    Float    @default(0) // 0..1
+  discoveredAt DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, externalId])
+  @@index([workspaceId, discoveredAt])
+}
+
+model HNThread {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  externalId   String // Algolia objectID
+  title        String   @db.Text
+  itemUrl      String
+  storyUrl     String?
+  points       Int      @default(0)
+  comments     Int      @default(0)
+  relevance    Float    @default(0)
   discoveredAt DateTime @default(now())
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)

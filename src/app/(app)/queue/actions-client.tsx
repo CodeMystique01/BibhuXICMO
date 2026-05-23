@@ -27,9 +27,24 @@ export function QueueActions({
           startTransition(async () => {
             const res = await publishDraftAction(id);
             if (res.ok) {
-              toast.success(
-                res.url ? "Published ↗" : "Marked as published"
-              );
+              if (res.assisted && res.clipboard) {
+                try {
+                  await navigator.clipboard.writeText(res.clipboard);
+                } catch {
+                  /* clipboard optional */
+                }
+                toast.success("Ready for HN — copied to clipboard", {
+                  description: "Paste on Hacker News and submit manually.",
+                  action: res.url
+                    ? {
+                        label: "Open HN",
+                        onClick: () => window.open(res.url!, "_blank"),
+                      }
+                    : undefined,
+                });
+              } else {
+                toast.success(res.url ? "Published ↗" : "Marked as published");
+              }
             } else {
               toast.error("Publish failed", { description: res.error });
             }
@@ -38,9 +53,11 @@ export function QueueActions({
         }
       >
         <Send className="h-4 w-4" />
-        {channel === "BLOG" || channel === "LANDING_PAGE"
-          ? "Mark published"
-          : "Publish"}
+        {channel === "HACKER_NEWS"
+          ? "Copy & submit"
+          : channel === "BLOG" || channel === "LANDING_PAGE"
+            ? "Mark published"
+            : "Publish"}
       </Button>
       <Button
         size="sm"

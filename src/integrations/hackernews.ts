@@ -36,3 +36,22 @@ export async function getHNFrontPage(limit = 30): Promise<HNStory[]> {
   const json = (await res.json()) as { hits: HNStory[] };
   return json.hits ?? [];
 }
+
+export type HNItem = {
+  id: number;
+  title?: string;
+  url?: string;
+  text?: string;
+  by?: string;
+  score?: number;
+  descendants?: number;
+  type: string;
+};
+
+/** Official HN Firebase API — read-only, no API key. */
+export async function getHNItem(id: string): Promise<HNItem | null> {
+  const res = await fetch(`https://hacker-news.firebaseio.com/v0/item/${id}.json`);
+  if (!res.ok) return null;
+  const json = (await res.json()) as HNItem | null;
+  return json;
+}

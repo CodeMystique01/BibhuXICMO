@@ -33,7 +33,7 @@ App	SEO agent	https://okara.ai/agents/seo	/agents/seo	src/app/(app)/agents/seo/p
 App	GEO agent	https://okara.ai/agents/geo	/agents/geo	src/app/(app)/agents/geo/page.tsx	
 App	Content writer	https://okara.ai/agents/content	/agents/content	src/app/(app)/agents/content/page.tsx	
 App	Reddit agent	https://okara.ai/agents/reddit	/agents/reddit	src/app/(app)/agents/reddit/page.tsx	
-App	Hacker News agent	https://okara.ai/agents/hn	/agents/hn	src/app/(app)/agents/hn/page.tsx	
+App	Hacker News agent	https://okara.ai/agents/hn	/agents/hn	src/app/(app)/agents/hn/page.tsx	Parity: comment scan + Show/Ask daily drafts, regenerate, assisted submit (no HN API key; Algolia search only)	
 App	X agent	https://okara.ai/agents/x	/agents/x	src/app/(app)/agents/x/page.tsx	
 App	LinkedIn agent	https://okara.ai/agents/linkedin	/agents/linkedin	src/app/(app)/agents/linkedin/page.tsx	
 App	Coding agent	https://okara.ai/agents/coding	/agents/coding	src/app/(app)/agents/coding/page.tsx	

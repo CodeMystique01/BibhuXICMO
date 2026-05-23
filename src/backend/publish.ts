@@ -4,10 +4,22 @@ import { postTweet, postThread } from "@/integrations/twitter";
 import { postToLinkedIn } from "@/integrations/linkedin";
 import { ContentStatus } from "@prisma/client";
 
+function buildHNClipboard(
+  title: string | null,
+  body: string,
+  postUrl?: string
+): string {
+  const parts = [title, postUrl, body].filter(Boolean);
+  return parts.join("\n\n");
+}
+
 export async function publishDraft(
   workspaceId: string,
   draftId: string
-): Promise<{ ok: true; url?: string } | { ok: false; error: string }> {
+): Promise<
+  | { ok: true; url?: string; assisted?: boolean; clipboard?: string }
+  | { ok: false; error: string }
+> {
   const draft = await prisma.contentDraft.findFirst({
     where: { id: draftId, workspaceId },
   });
@@ -42,12 +54,39 @@ export async function publishDraft(
         externalUrl = res?.url;
         break;
       }
-      case "HACKER_NEWS":
+      case "HACKER_NEWS": {
+        const hnKind = meta.hnKind as string | undefined;
+        const itemUrl = meta.itemUrl as string | undefined;
+        const postUrl = meta.postUrl as string | undefined;
+        if (hnKind === "comment" && itemUrl) {
+          externalUrl = itemUrl;
+        } else {
+          externalUrl = "https://news.ycombinator.com/submit";
+        }
+        await prisma.contentDraft.update({
+          where: { id: draft.id },
+          data: {
+            status: ContentStatus.PUBLISHED,
+            publishedAt: new Date(),
+            externalUrl,
+            meta: {
+              ...meta,
+              publishMode: "assisted",
+              assistedNote:
+                hnKind === "comment"
+                  ? "Copy the comment and paste it on the HN thread."
+                  : "Copy title/body and submit at news.ycombinator.com/submit",
+              postUrl,
+            },
+          },
+        });
         return {
-          ok: false,
-          error:
-            "Hacker News has no official posting API. Open the thread and post the comment manually.",
+          ok: true,
+          url: externalUrl,
+          assisted: true as const,
+          clipboard: buildHNClipboard(draft.title, draft.body, postUrl),
         };
+      }
       case "BLOG":
       case "LANDING_PAGE":
       case "NEWSLETTER":

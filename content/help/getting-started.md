@@ -14,7 +14,7 @@ After you sign up, you'll land on the onboarding wizard. Paste your website URL.
 
 ## 2. Connect your channels
 
-The Integrations page lets you connect Reddit, X, LinkedIn, Hacker News, Google Search Console, and GA4. Each connection is optional; the agent works with whatever you connect.
+The Integrations page lets you connect Reddit, X, LinkedIn, Google Search Console, and GA4. The **Hacker News agent** needs no API key — it searches via Algolia and drafts Show HN, Ask HN, and comments for you to submit manually on news.ycombinator.com.
 
 ## 3. Review your first Action Items
 

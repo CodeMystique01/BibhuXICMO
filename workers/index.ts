@@ -82,7 +82,8 @@ for (const agent of listAgents()) {
         select: { id: true },
       });
       for (const ws of workspaces) {
-        await enqueueAgentRun(agent.id, ws.id);
+        const input = agent.id === "hn" ? { mode: "scan" } : undefined;
+        await enqueueAgentRun(agent.id, ws.id, input);
       }
     });
     console.log(`[cron] registered ${agent.id} @ ${agent.schedule}`);
@@ -90,6 +91,62 @@ for (const agent of listAgents()) {
     console.warn(`[cron] invalid schedule for ${agent.id}: ${agent.schedule}`, err);
   }
 }
+
+// Hacker News — daily Show HN / Ask HN generation at 14:00 UTC (~morning US)
+cron.schedule("0 14 * * *", async () => {
+  console.log("[cron] fan-out agent:hn posts");
+  const workspaces = await prisma.workspace.findMany({
+    where: { websiteUrl: { not: null } },
+    select: { id: true },
+  });
+  for (const ws of workspaces) {
+    await enqueueAgentRun("hn", ws.id, { mode: "posts" });
+  }
+});
+
+// HN scheduled post reminders — every 15 minutes
+cron.schedule("*/15 * * * *", async () => {
+  const due = await prisma.scheduledPost.findMany({
+    where: {
+      status: "pending",
+      channel: "HACKER_NEWS",
+      scheduledAt: { lte: new Date() },
+    },
+    include: {
+      draft: true,
+      workspace: { include: { owner: true } },
+    },
+    take: 50,
+  });
+  for (const sp of due) {
+    if (!sp.draft) continue;
+    const meta = sp.draft.meta as Record<string, unknown> | null;
+    const hnKind = meta?.hnKind ?? "show_hn";
+    await prisma.actionItem.create({
+      data: {
+        workspaceId: sp.workspaceId,
+        agent: "hn",
+        type: "hn.post",
+        title: `Time to post your ${hnKind === "ask_hn" ? "Ask HN" : "Show HN"}`,
+        summary: sp.draft.title ?? "Your scheduled HN draft is ready to submit.",
+        cta: "Submit on HN",
+        href: `/content/${sp.draftId}`,
+        priority: "HIGH",
+      },
+    });
+    if (sp.workspace.owner.email) {
+      await emailQueue().add(`hn-reminder:${sp.id}`, {
+        to: sp.workspace.owner.email,
+        subject: `${SITE_NAME} · Time to post on Hacker News`,
+        html: `<p>Your scheduled HN draft <strong>${sp.draft.title ?? "Untitled"}</strong> is ready.</p><p><a href="${env.APP_URL}/content/${sp.draftId}">Review and submit on HN</a></p>`,
+      });
+    }
+    await prisma.scheduledPost.update({
+      where: { id: sp.id },
+      data: { status: "reminded", processedAt: new Date() },
+    });
+  }
+});
 
 // Daily email digest — 7:00 UTC
 cron.schedule("0 7 * * *", async () => {

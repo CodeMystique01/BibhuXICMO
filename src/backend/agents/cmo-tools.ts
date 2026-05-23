@@ -8,10 +8,12 @@
  */
 import { z } from "zod";
 import { tool } from "ai";
+import { prisma } from "@/backend/db";
 import { fetchPage, normalizeUrl } from "@/backend/scraper/fetch";
 import { fetchPageSpeed } from "@/backend/pagespeed";
 import { searchReddit } from "@/integrations/reddit";
 import { searchHN } from "@/integrations/hackernews";
+import { runHNPostGeneration } from "@/backend/agents/hn";
 import { executeAgent } from "@/backend/agents/base";
 import { seoAgent } from "@/backend/agents/seo";
 import { geoAgent } from "@/backend/agents/geo";
@@ -180,14 +182,15 @@ export function buildCmoTools(workspaceId: string) {
 
     find_hn_threads: tool({
       description:
-        "Search Hacker News (Algolia) for stories matching a keyword. No key required. HN has no posting API — surface results so the user can engage manually.",
+        "Search Hacker News (Algolia) for stories matching a keyword. No API key required.",
       parameters: z.object({
         query: z.string(),
         limit: z.number().int().min(1).max(20).default(10),
+        byDate: z.boolean().default(true).describe("Prefer recent stories"),
       }),
-      execute: async ({ query, limit }) => {
+      execute: async ({ query, limit, byDate }) => {
         try {
-          const results = await searchHN(query, { limit });
+          const results = await searchHN(query, { limit, byDate });
           return {
             ok: true,
             count: results.length,
@@ -203,6 +206,35 @@ export function buildCmoTools(workspaceId: string) {
           return {
             ok: false,
             error: err instanceof Error ? err.message : "hn_failed",
+          };
+        }
+      },
+    }),
+
+    draft_hn_posts: tool({
+      description:
+        "Generate Show HN and Ask HN post drafts for this workspace (saved to content library). No HN API key required.",
+      parameters: z.object({}),
+      execute: async () => {
+        const workspace = await prisma.workspace.findUnique({
+          where: { id: workspaceId },
+        });
+        if (!workspace) return { ok: false, error: "workspace_not_found" };
+        const ctx = {
+          workspaceId,
+          websiteUrl: workspace.websiteUrl,
+          industry: workspace.industry,
+          icp: workspace.icp,
+          voiceProfile: workspace.voiceProfile,
+          preferredModel: CMO_PREFERRED_MODEL,
+        };
+        try {
+          const { generated } = await runHNPostGeneration(ctx, { skipIfRecent: false });
+          return { ok: true, generated };
+        } catch (err) {
+          return {
+            ok: false,
+            error: err instanceof Error ? err.message : "hn_posts_failed",
           };
         }
       },
