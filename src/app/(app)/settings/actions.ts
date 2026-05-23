@@ -59,9 +59,17 @@ export async function updateWorkspaceAction(
     },
   });
 
+  if (urlChanged) {
+    const { invalidateStaleHNDrafts } = await import("@/backend/agents/hn-stale");
+    await invalidateStaleHNDrafts(workspace.id, nextUrl);
+  }
+
   revalidatePath("/settings");
   revalidatePath("/dashboard");
   revalidatePath("/agent/cmo");
+  revalidatePath("/agents/hn");
+  revalidatePath("/content");
+  revalidatePath("/queue");
   return { ok: true as const, resetStrategy: urlChanged };
 }
 

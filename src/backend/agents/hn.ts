@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { prisma } from "@/backend/db";
 import { meteredGenerateObject, pickAvailableModel } from "@/backend/llm";
-import { searchHN, type HNStory } from "@/integrations/hackernews";
 import { HN_SUBMIT_URL, hnItemUrl, parseHnMeta, type HNKind } from "@/shared/hn";
 import type { Agent, AgentContext } from "./base";
 import { upsertHNThread } from "./hn-db";
@@ -11,25 +10,10 @@ import {
   MIN_COMMENT_RELEVANCE,
   MIN_DISCOVERED_RELEVANCE,
 } from "./hn-keywords";
+import { discoverRelevantHNThreads } from "./hn-search";
+import { hnDraftSourceMeta, invalidateStaleHNDrafts } from "./hn-stale";
 
-/** Max stories to score with LLM per scan (keyword search only). */
-const MAX_STORIES_TO_SCORE = 10;
-
-/** Max rows to keep in Discovered after filtering. */
 const MAX_DISCOVERED_SAVE = 8;
-
-const hnReplySchema = z.object({
-  relevance: z
-    .number()
-    .min(0)
-    .max(1)
-    .describe(
-      "0 = unrelated to our product/market. 0.5 = tangential. 0.8+ = strong fit for a useful comment."
-    ),
-  shouldComment: z.boolean(),
-  reasoning: z.string(),
-  comment: z.string(),
-});
 
 const hnPostSchema = z.object({
   title: z.string().describe("Must start with Show HN: or Ask HN:"),
@@ -43,6 +27,8 @@ export type HNAgentMode = "scan" | "posts" | "both";
 export type HNAgentInput = {
   keywords?: string[];
   mode?: HNAgentMode;
+  /** Manual "Generate posts" always refreshes for current site. */
+  forcePosts?: boolean;
 };
 
 type VoiceProfile = {
@@ -50,101 +36,23 @@ type VoiceProfile = {
   positioning?: string;
 };
 
-type ScoredStory = {
-  story: HNStory;
-  relevance: number;
-  shouldComment: boolean;
-  reasoning: string;
-  comment: string;
-};
-
-function dedupeStories(stories: HNStory[]): HNStory[] {
-  const seen = new Set<string>();
-  return stories.filter((s) => !seen.has(s.objectID) && seen.add(s.objectID));
-}
-
-async function fetchKeywordStories(keywords: string[]): Promise<HNStory[]> {
-  const allStories: HNStory[] = [];
-  for (const kw of keywords) {
-    try {
-      const hits = await searchHN(kw, { limit: 12, byDate: true });
-      allStories.push(...hits);
-    } catch (err) {
-      console.warn(`HN search failed for "${kw}":`, err);
-    }
-  }
-  return dedupeStories(allStories);
-}
-
-async function scoreStory(
-  ctx: AgentContext,
-  voice: VoiceProfile | null,
-  s: HNStory,
-  model: NonNullable<ReturnType<typeof pickAvailableModel>>
-): Promise<ScoredStory | null> {
-  const storyText = s.story_text;
-  const { object } = await meteredGenerateObject(
-    [
-      "You score whether an HN thread is worth engaging for THIS company only.",
-      formatBrandContext(ctx, voice),
-      "",
-      `HN story (${s.points} points, ${s.num_comments} comments):`,
-      `Title: ${s.title}`,
-      s.url && `URL: ${s.url}`,
-      storyText && `Text: ${storyText.slice(0, 800)}`,
-      "",
-      "Rules:",
-      "- relevance < 0.2 if the story is generic tech news with no tie to our market, product, or customers.",
-      "- relevance < 0.3 if it only vaguely mentions a giant brand (e.g. Amazon) but is not about our niche.",
-      "- shouldComment=true only when we can add a non-promotional, expert comment that fits the thread.",
-      "- Never inflate scores to force engagement.",
-    ]
-      .filter(Boolean)
-      .join("\n"),
-    hnReplySchema,
-    {
-      workspaceId: ctx.workspaceId,
-      reason: "hn.scan",
-      model,
-    }
-  );
-
-  return {
-    story: s,
-    relevance: object.relevance,
-    shouldComment: object.shouldComment,
-    reasoning: object.reasoning,
-    comment: object.comment,
-  };
-}
-
 export async function runHNCommentScan(
   ctx: AgentContext,
-  input: HNAgentInput
+  _input: HNAgentInput
 ): Promise<{ surfaced: number; message?: string; discovered?: number }> {
   const voice = ctx.voiceProfile as VoiceProfile | null;
-  const keywords = deriveHNKeywords(ctx, input.keywords, voice);
+  const keywords = deriveHNKeywords(ctx, _input.keywords, voice);
 
-  if (keywords.length === 0) {
+  if (!ctx.websiteUrl && keywords.length === 0) {
     return {
       surfaced: 0,
       discovered: 0,
       message:
-        "Add a website URL and complete onboarding (industry / strategy) so we can search HN with relevant keywords.",
-    };
-  }
-
-  const unique = await fetchKeywordStories(keywords);
-  if (unique.length === 0) {
-    return {
-      surfaced: 0,
-      discovered: 0,
-      message: `No HN stories matched: ${keywords.join(", ")}. Try updating your industry or strategy keywords.`,
+        "Add a website URL in Settings so we can plan targeted HN searches for your product.",
     };
   }
 
   const model = pickAvailableModel(ctx.preferredModel ?? "gpt-4o-mini");
-
   if (!model) {
     return {
       surfaced: 0,
@@ -154,7 +62,6 @@ export async function runHNCommentScan(
     };
   }
 
-  // Drop stale low-relevance rows from older scans
   await prisma.hNThread.deleteMany({
     where: {
       workspaceId: ctx.workspaceId,
@@ -162,32 +69,21 @@ export async function runHNCommentScan(
     },
   });
 
-  const toScore = unique.slice(0, MAX_STORIES_TO_SCORE);
-  const scored: ScoredStory[] = [];
+  const { ranked, queries, nicheSummary, scanned } = await discoverRelevantHNThreads(
+    ctx,
+    voice
+  );
 
-  for (const s of toScore) {
-    try {
-      const result = await scoreStory(ctx, voice, s, model);
-      if (result) scored.push(result);
-    } catch (err) {
-      console.warn("HN analysis failed:", err);
-    }
-  }
-
-  scored.sort((a, b) => b.relevance - a.relevance);
-
-  const relevant = scored.filter((r) => r.relevance >= MIN_DISCOVERED_RELEVANCE);
+  const relevant = ranked.filter((r) => r.relevance >= MIN_DISCOVERED_RELEVANCE);
   const toSave = relevant.slice(0, MAX_DISCOVERED_SAVE);
 
-  let surfaced = 0;
   for (const r of toSave) {
     const s = r.story;
-    const itemUrl = hnItemUrl(s.objectID);
     await upsertHNThread({
       workspaceId: ctx.workspaceId,
       externalId: s.objectID,
       title: s.title,
-      itemUrl,
+      itemUrl: hnItemUrl(s.objectID),
       storyUrl: s.url ?? null,
       points: s.points,
       comments: s.num_comments,
@@ -195,6 +91,7 @@ export async function runHNCommentScan(
     });
   }
 
+  let surfaced = 0;
   for (const r of relevant) {
     if (!r.shouldComment || r.relevance < MIN_COMMENT_RELEVANCE) continue;
 
@@ -214,6 +111,7 @@ export async function runHNCommentScan(
           itemUrl,
           submitUrl: HN_SUBMIT_URL,
           reasoning: r.reasoning,
+          ...hnDraftSourceMeta(ctx.websiteUrl),
         },
         status: "PENDING_APPROVAL",
       },
@@ -239,7 +137,7 @@ export async function runHNCommentScan(
     return {
       surfaced: 0,
       discovered: 0,
-      message: `Scanned ${toScore.length} stories for [${keywords.join(", ")}] — none were relevant enough (need ≥${Math.round(MIN_DISCOVERED_RELEVANCE * 100)}% fit).`,
+      message: `Searched ${scanned} stories (${queries.slice(0, 4).join("; ")}…) — none matched: ${nicheSummary}`,
     };
   }
 
@@ -248,15 +146,15 @@ export async function runHNCommentScan(
     discovered: toSave.length,
     message:
       surfaced === 0
-        ? `Saved ${toSave.length} relevant thread(s); no comment drafts (need ≥${Math.round(MIN_COMMENT_RELEVANCE * 100)}% to draft).`
+        ? `Saved ${toSave.length} relevant thread(s) for “${nicheSummary.slice(0, 80)}”.`
         : undefined,
   };
 }
 
 export async function runHNPostGeneration(
   ctx: AgentContext,
-  opts: { skipIfRecent?: boolean } = {}
-): Promise<{ generated: number; message?: string }> {
+  opts: { skipIfRecent?: boolean; force?: boolean } = {}
+): Promise<{ generated: number; message?: string; staleRejected?: number }> {
   const voice = ctx.voiceProfile as VoiceProfile | null;
   const model = pickAvailableModel(ctx.preferredModel ?? "gpt-4o-mini");
   if (!model) {
@@ -267,42 +165,65 @@ export async function runHNPostGeneration(
     };
   }
 
-  if (opts.skipIfRecent) {
+  const staleRejected = await invalidateStaleHNDrafts(ctx.workspaceId, ctx.websiteUrl);
+
+  if (!opts.force && opts.skipIfRecent) {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const normalized = (ctx.websiteUrl ?? "").replace(/\/$/, "").toLowerCase();
     const recent = await prisma.contentDraft.findMany({
       where: {
         workspaceId: ctx.workspaceId,
         agent: "hn",
         createdAt: { gte: since },
         channel: "HACKER_NEWS",
+        status: { in: ["DRAFT", "PENDING_APPROVAL", "SCHEDULED"] },
       },
       select: { meta: true },
     });
-    const hasPost = recent.some((d) => {
+    const hasPostForSite = recent.some((d) => {
       const k = parseHnMeta(d.meta)?.hnKind;
-      return k === "show_hn" || k === "ask_hn";
+      if (k !== "show_hn" && k !== "ask_hn") return false;
+      const source = String((d.meta as Record<string, unknown>)?.sourceWebsiteUrl ?? "")
+        .replace(/\/$/, "")
+        .toLowerCase();
+      return source === normalized;
     });
-    if (hasPost) return { generated: 0 };
+    if (hasPostForSite) {
+      return {
+        generated: 0,
+        staleRejected,
+        message: "Show/Ask drafts already exist for this site today. Click Generate posts again tomorrow or after changing your website.",
+      };
+    }
+  }
+
+  if (!ctx.websiteUrl) {
+    return {
+      generated: 0,
+      staleRejected,
+      message: "Set your website URL in Settings before generating Show HN / Ask HN posts.",
+    };
   }
 
   const postTypes: Array<{ kind: HNKind; prompt: string }> = [
     {
       kind: "show_hn",
       prompt: [
-        `Write a Show HN submission for this product.`,
+        `Write a Show HN submission for the product at ${ctx.websiteUrl} ONLY.`,
+        "Do not reference any other company or previous website.",
         formatBrandContext(ctx, voice),
         "",
-        "Title MUST start with 'Show HN:'. Body: direct, technical, what you built and why — ask for feedback. Include postUrl if you have a product link.",
+        "Title MUST start with 'Show HN:'. Body: direct, technical, what you built and why — ask for feedback.",
         "No marketing fluff. HN culture: humble, specific, useful.",
       ].join("\n"),
     },
     {
       kind: "ask_hn",
       prompt: [
-        `Write an Ask HN post that would genuinely engage the HN community.`,
+        `Write an Ask HN post for the founder of ${ctx.websiteUrl} ONLY.`,
         formatBrandContext(ctx, voice),
         "",
-        "Title MUST start with 'Ask HN:'. Body: a real question founders/developers would discuss — not a disguised pitch.",
+        "Title MUST start with 'Ask HN:'. Body: a real question the HN community would discuss — not a disguised pitch.",
       ].join("\n"),
     },
   ];
@@ -339,6 +260,7 @@ export async function runHNPostGeneration(
             postUrl,
             reasoning: object.reasoning,
             peakWindow: "morning_pt",
+            ...hnDraftSourceMeta(ctx.websiteUrl),
           },
           status: "PENDING_APPROVAL",
         },
@@ -363,7 +285,16 @@ export async function runHNPostGeneration(
     }
   }
 
-  return { generated };
+  const extra =
+    staleRejected > 0
+      ? ` Removed ${staleRejected} outdated draft(s) from your previous website.`
+      : "";
+
+  return {
+    generated,
+    staleRejected,
+    message: generated === 0 ? `Could not generate posts.${extra}` : extra || undefined,
+  };
 }
 
 export type HNAgentOutput = {
@@ -393,7 +324,7 @@ export const hackerNewsAgent: Agent<HNAgentInput, HNAgentOutput> = {
     }
 
     if (mode === "posts") {
-      const posts = await runHNPostGeneration(ctx);
+      const posts = await runHNPostGeneration(ctx, { force: input.forcePosts ?? true });
       generated = posts.generated;
       if (posts.message) messages.push(posts.message);
     } else if (mode === "both") {

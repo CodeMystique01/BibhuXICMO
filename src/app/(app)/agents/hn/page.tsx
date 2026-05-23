@@ -13,7 +13,7 @@ import { parseHnMeta, hnKindLabel } from "@/shared/hn";
 export const metadata = { title: "Hacker News Agent" };
 
 /** Allow long HN runs (multiple LLM calls) on serverless hosts. */
-export const maxDuration = 120;
+export const maxDuration = 180;
 
 function isPostDraft(meta: unknown) {
   const k = parseHnMeta(meta)?.hnKind;
@@ -50,7 +50,18 @@ export default async function HNAgentPage() {
     }),
   ]);
 
-  const postDrafts = drafts.filter((d) => isPostDraft(d.meta));
+  const siteKey = (workspace.websiteUrl ?? "").replace(/\/$/, "").toLowerCase();
+
+  const postDraftForSite = (meta: unknown) => {
+    if (!isPostDraft(meta)) return false;
+    const source = String((meta as Record<string, unknown>)?.sourceWebsiteUrl ?? "")
+      .replace(/\/$/, "")
+      .toLowerCase();
+    if (!source) return true;
+    return source === siteKey;
+  };
+
+  const postDrafts = drafts.filter((d) => postDraftForSite(d.meta));
   const commentDrafts = drafts.filter((d) => isCommentDraft(d.meta));
 
   return (
@@ -80,7 +91,7 @@ export default async function HNAgentPage() {
         <TabsContent value="posts">
           <DraftList
             drafts={postDrafts}
-            empty="No Show HN or Ask HN drafts yet. Click Generate posts or wait for the daily run."
+            empty="No Show HN or Ask HN drafts for your current website. Click Generate posts after saving Settings."
           />
         </TabsContent>
 

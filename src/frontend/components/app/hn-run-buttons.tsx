@@ -50,7 +50,10 @@ export function HNRunButtons() {
   function run(mode: "scan" | "posts", label: string) {
     startTransition(async () => {
       try {
-        const res = await runAgentAction("hn", { mode });
+        const res = await runAgentAction("hn", {
+          mode,
+          ...(mode === "posts" ? { forcePosts: true } : {}),
+        });
         if (res.ok) {
           toast.success(`${label} completed`, {
             description: describeHNOutput(res.output),
