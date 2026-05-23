@@ -189,6 +189,23 @@ export async function extractSocialHandles(
 
   const hasAny = Object.values(candidates).some((arr) => arr.length > 0);
   if (!hasAny) {
+    // Page had no social links (likely a React/JS app where links are rendered
+    // client-side, or a small site that doesn't link out). Fall back to Claude's
+    // world knowledge of the brand — same pattern we use for competitors when
+    // the scraper is blocked.
+    if (isLikelyValidKey(env.ANTHROPIC_API_KEY)) {
+      try {
+        const fromKnowledge = await guessHandlesFromBrand(snapshot.url, {
+          title: snapshot.title,
+          description: snapshot.description,
+        });
+        if (Object.keys(fromKnowledge).length > 0) {
+          return { handles: fromKnowledge, source: "claude", candidates };
+        }
+      } catch {
+        /* swallow — caller renders the empty state */
+      }
+    }
     return { handles: {}, source: "empty", candidates };
   }
 
@@ -265,5 +282,53 @@ Rules:
     return { handles, source: "claude", candidates };
   } catch {
     return { handles: heuristic, source: "regex", candidates };
+  }
+}
+
+/**
+ * Pure-knowledge fallback when the homepage scrape yields no social links.
+ * Asks Claude what the official handles are for the brand at this domain;
+ * returns null if it doesn't recognize the brand (instead of fabricating).
+ */
+async function guessHandlesFromBrand(
+  url: string,
+  hints: { title?: string; description?: string }
+): Promise<SocialHandles> {
+  let host = url;
+  try {
+    host = new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    /* leave url as-is */
+  }
+  const prompt = `Identify the official social-media accounts for the brand at the domain "${host}".
+
+Page metadata (may be empty if the scrape was JS-blocked):
+- Title: ${hints.title || "(none)"}
+- Description: ${hints.description || "(none)"}
+
+Use your knowledge of this brand. If you don't recognize the brand from the bare domain, return null for every platform — do NOT guess slugs.
+
+Output rules (same as the strict path):
+- Twitter / Instagram / TikTok handles should be like "@handle".
+- LinkedIn: "linkedin.com/company/slug".
+- YouTube: "@handle" or "youtube.com/c/slug" or "youtube.com/channel/UCxxxx".
+- GitHub: bare org name like "anthropics".
+- Facebook: "facebook.com/slug".`;
+
+  try {
+    const { object } = await generateObject({
+      model: getModel("claude-sonnet-4-6"),
+      schema: HANDLES_SCHEMA,
+      prompt,
+      maxRetries: 1,
+    });
+    const out: SocialHandles = {};
+    for (const k of Object.keys(object) as Array<keyof SocialHandles>) {
+      const v = object[k];
+      if (v && typeof v === "string" && v.trim()) out[k] = v.trim();
+    }
+    return out;
+  } catch {
+    return {};
   }
 }
