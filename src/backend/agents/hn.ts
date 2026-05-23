@@ -11,7 +11,11 @@ import {
   MIN_DISCOVERED_RELEVANCE,
 } from "./hn-keywords";
 import { discoverRelevantHNThreads } from "./hn-search";
-import { hnDraftSourceMeta, invalidateStaleHNDrafts } from "./hn-stale";
+import {
+  getHNPostKind,
+  hnDraftSourceMeta,
+  invalidateStaleHNDrafts,
+} from "./hn-stale";
 
 const MAX_DISCOVERED_SAVE = 8;
 
@@ -40,6 +44,8 @@ export async function runHNCommentScan(
   ctx: AgentContext,
   _input: HNAgentInput
 ): Promise<{ surfaced: number; message?: string; discovered?: number }> {
+  await invalidateStaleHNDrafts(ctx.workspaceId, ctx.websiteUrl);
+
   const voice = ctx.voiceProfile as VoiceProfile | null;
   const keywords = deriveHNKeywords(ctx, _input.keywords, voice);
 
@@ -178,15 +184,14 @@ export async function runHNPostGeneration(
         channel: "HACKER_NEWS",
         status: { in: ["DRAFT", "PENDING_APPROVAL", "SCHEDULED"] },
       },
-      select: { meta: true },
+      select: { meta: true, title: true },
     });
     const hasPostForSite = recent.some((d) => {
-      const k = parseHnMeta(d.meta)?.hnKind;
-      if (k !== "show_hn" && k !== "ask_hn") return false;
+      if (!getHNPostKind(d.meta, d.title)) return false;
       const source = String((d.meta as Record<string, unknown>)?.sourceWebsiteUrl ?? "")
         .replace(/\/$/, "")
         .toLowerCase();
-      return source === normalized;
+      return !!source && source === normalized;
     });
     if (hasPostForSite) {
       return {

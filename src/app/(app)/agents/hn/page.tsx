@@ -8,17 +8,13 @@ import { Badge } from "@/frontend/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/frontend/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/frontend/components/ui/tabs";
 import { MIN_DISCOVERED_RELEVANCE } from "@/backend/agents/hn-keywords";
+import { invalidateStaleHNDrafts, postDraftMatchesSite } from "@/backend/agents/hn-stale";
 import { parseHnMeta, hnKindLabel } from "@/shared/hn";
 
 export const metadata = { title: "Hacker News Agent" };
 
 /** Allow long HN runs (multiple LLM calls) on serverless hosts. */
 export const maxDuration = 180;
-
-function isPostDraft(meta: unknown) {
-  const k = parseHnMeta(meta)?.hnKind;
-  return k === "show_hn" || k === "ask_hn";
-}
 
 function isCommentDraft(meta: unknown) {
   const k = parseHnMeta(meta)?.hnKind;
@@ -29,6 +25,8 @@ function isCommentDraft(meta: unknown) {
 
 export default async function HNAgentPage() {
   const { workspace } = await requireWorkspace();
+  await invalidateStaleHNDrafts(workspace.id, workspace.websiteUrl);
+
   const [drafts, runs, threads] = await Promise.all([
     prisma.contentDraft.findMany({
       where: { workspaceId: workspace.id, agent: "hn" },
@@ -50,18 +48,9 @@ export default async function HNAgentPage() {
     }),
   ]);
 
-  const siteKey = (workspace.websiteUrl ?? "").replace(/\/$/, "").toLowerCase();
-
-  const postDraftForSite = (meta: unknown) => {
-    if (!isPostDraft(meta)) return false;
-    const source = String((meta as Record<string, unknown>)?.sourceWebsiteUrl ?? "")
-      .replace(/\/$/, "")
-      .toLowerCase();
-    if (!source) return true;
-    return source === siteKey;
-  };
-
-  const postDrafts = drafts.filter((d) => postDraftForSite(d.meta));
+  const postDrafts = drafts.filter((d) =>
+    postDraftMatchesSite(d.meta, d.title, workspace.websiteUrl)
+  );
   const commentDrafts = drafts.filter((d) => isCommentDraft(d.meta));
 
   return (
