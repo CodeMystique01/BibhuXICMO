@@ -85,15 +85,17 @@ export function AnalyticsPanel({ data }: { data: CmoData }) {
         <ConnectGoogleRow ga4={data.integrations.ga4} gsc={data.integrations.gsc} />
 
         <Tabs value={tab} onValueChange={onChange} className="flex flex-1 flex-col">
-          <TabsList className="flex flex-wrap self-start">
-            <TabsTrigger value="health">Health</TabsTrigger>
-            <TabsTrigger value="search">Search</TabsTrigger>
-            <TabsTrigger value="traffic">Traffic</TabsTrigger>
-            <TabsTrigger value="links">Links</TabsTrigger>
-            <TabsTrigger value="technical">Technical</TabsTrigger>
-            <TabsTrigger value="aigeo">AI / GEO</TabsTrigger>
-            <TabsTrigger value="checks">Checks</TabsTrigger>
-          </TabsList>
+          <div className="-mx-1 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <TabsList className="inline-flex w-auto min-w-full whitespace-nowrap">
+              <TabsTrigger value="health" className="text-xs">Health</TabsTrigger>
+              <TabsTrigger value="search" className="text-xs">Search</TabsTrigger>
+              <TabsTrigger value="traffic" className="text-xs">Traffic</TabsTrigger>
+              <TabsTrigger value="links" className="text-xs">Links</TabsTrigger>
+              <TabsTrigger value="technical" className="text-xs">Tech</TabsTrigger>
+              <TabsTrigger value="aigeo" className="text-xs">AI/GEO</TabsTrigger>
+              <TabsTrigger value="checks" className="text-xs">Checks</TabsTrigger>
+            </TabsList>
+          </div>
 
           <TabsContent value="health" className="flex-1">
             <HealthTab data={data} />

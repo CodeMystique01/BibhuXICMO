@@ -20,6 +20,7 @@ import {
 import { Badge } from "@/frontend/components/ui/badge";
 import { Button } from "@/frontend/components/ui/button";
 import { SiteQuickAdd } from "@/frontend/components/app/cmo/site-quick-add";
+import { CompetitorPill } from "@/frontend/components/app/cmo/competitor-pill";
 import { Card, CardContent, CardHeader, CardTitle } from "@/frontend/components/ui/card";
 import type { CmoFastData, CmoSlowData } from "@/backend/agents/cmo-data";
 
@@ -82,6 +83,7 @@ export function CompanyPanel({ data }: { data: CompanyData }) {
               key={s.id}
               icon={s.icon}
               label={s.label}
+              isReady={sectionHasContent(s.id, data)}
               isOpen={open === s.id}
               onToggle={() => setOpen(open === s.id ? null : s.id)}
             >
@@ -91,12 +93,15 @@ export function CompanyPanel({ data }: { data: CompanyData }) {
         </div>
 
         {data.topCompetitors.length > 0 ? (
-          <div className="mt-1 flex flex-wrap gap-1.5">
-            {data.topCompetitors.map((c) => (
-              <Badge key={c} variant="outline" className="text-[10px]">
-                {c}
-              </Badge>
-            ))}
+          <div className="space-y-2 border-t pt-3">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Competitors
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {data.topCompetitors.map((c) => (
+                <CompetitorPill key={c} competitor={c} size="sm" />
+              ))}
+            </div>
           </div>
         ) : null}
       </CardContent>
@@ -108,17 +113,19 @@ function DocumentCard({
   icon: Icon,
   label,
   isOpen,
+  isReady,
   onToggle,
   children,
 }: {
   icon: typeof FileText;
   label: string;
   isOpen: boolean;
+  isReady?: boolean;
   onToggle: () => void;
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-md border bg-card">
+    <div className="rounded-md border bg-card transition-colors hover:border-border/80">
       <button
         type="button"
         onClick={onToggle}
@@ -127,6 +134,11 @@ function DocumentCard({
       >
         <Icon className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
         <span className="flex-1 truncate">{label}</span>
+        {isReady ? (
+          <span className="inline-flex items-center rounded bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-emerald-500">
+            new
+          </span>
+        ) : null}
         <ChevronDown
           className={
             "h-3.5 w-3.5 text-muted-foreground transition-transform " +
@@ -142,6 +154,24 @@ function DocumentCard({
       ) : null}
     </div>
   );
+}
+
+function sectionHasContent(section: Section, data: CompanyData): boolean {
+  const v = data.voice;
+  switch (section) {
+    case "product":
+      return !!(
+        data.liveSnapshot?.description ||
+        v?.siteDescription ||
+        (v?.valueProps && v.valueProps.length > 0)
+      );
+    case "competitors":
+      return !!(v?.competitors && v.competitors.length > 0);
+    case "voice":
+      return !!(v?.brandVoice?.tone || v?.tone || v?.positioning);
+    case "strategy":
+      return !!(v?.channels?.length || v?.topicClusters?.length);
+  }
 }
 
 function DocumentBody({
@@ -204,13 +234,11 @@ function DocumentBody({
       return (
         <div className="space-y-2">
           {v?.competitors?.length ? (
-            <ul className="space-y-1">
+            <div className="flex flex-wrap gap-1.5">
               {v.competitors.slice(0, 12).map((c) => (
-                <li key={c} className="rounded bg-muted/40 px-2 py-1 text-foreground">
-                  {c}
-                </li>
+                <CompetitorPill key={c} competitor={c} />
               ))}
-            </ul>
+            </div>
           ) : null}
           {enrich?.competitorAngles ? (
             <p className="rounded-md border border-dashed bg-muted/20 p-2 text-[11px]">
