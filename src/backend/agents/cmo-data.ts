@@ -381,17 +381,39 @@ export async function loadCmoSlowData(args: {
     }
   }
 
-  // Auto-detect social handles when websiteUrl is set and we haven't found them yet.
-  // Runs once per workspace per site (results cached on voiceProfile.socialHandles).
-  // The latest fresh voice wins for the in-memory return, but we always persist
-  // the merged result so the next page load already has handles available.
+  // Auto-detect social handles when websiteUrl is set and we haven't found them
+  // yet OR the cached handles look stale for the current site (e.g. user just
+  // switched the workspace to a different domain — old handles must not linger).
   const currentVoice = freshVoice ?? voice ?? null;
-  const hasHandles =
-    currentVoice?.socialHandles &&
-    Object.values(currentVoice.socialHandles).some(
-      (v) => typeof v === "string" && v.trim().length > 0
-    );
-  if (websiteUrl && !hasHandles) {
+  const handleValues = Object.values(currentVoice?.socialHandles ?? {}).filter(
+    (v): v is string => typeof v === "string" && v.trim().length > 0
+  );
+  const hasHandles = handleValues.length > 0;
+  const currentHost = ((): string | null => {
+    if (!websiteUrl) return null;
+    try {
+      const u = websiteUrl.startsWith("http") ? websiteUrl : `https://${websiteUrl}`;
+      return new URL(u).hostname.replace(/^www\./, "").toLowerCase();
+    } catch {
+      return null;
+    }
+  })();
+  const brandRoot = currentHost ? currentHost.split(".")[0] : null;
+  // Heuristic: if the brand slug (e.g. "anthropic" from anthropic.com) does
+  // NOT appear in any cached handle, the handles probably belong to a
+  // previous workspace site and should be refreshed.
+  const handlesLookStale =
+    hasHandles &&
+    !!brandRoot &&
+    !handleValues.some((v) => v.toLowerCase().includes(brandRoot));
+  const shouldRunHandleDetect =
+    websiteUrl && (!hasHandles || handlesLookStale);
+  // When we're about to refresh stale handles, drop the old ones so the in-memory
+  // voice doesn't keep rendering the previous site's pills during this request.
+  if (handlesLookStale && currentVoice) {
+    currentVoice.socialHandles = undefined;
+  }
+  if (shouldRunHandleDetect) {
     try {
       const detected = await extractSocialHandles(websiteUrl);
       if (Object.keys(detected.handles).length > 0) {

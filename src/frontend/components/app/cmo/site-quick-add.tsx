@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Globe, Loader2, Pencil, X } from "lucide-react";
+import { ArrowRight, ExternalLink, Globe, Loader2, Pencil, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/frontend/components/ui/button";
 import { Input } from "@/frontend/components/ui/input";
@@ -88,17 +88,41 @@ export function SiteQuickAdd({
   }
 
   if (!open) {
+    const display = currentUrl
+      ? currentUrl.replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/$/, "")
+      : "";
     return (
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        onClick={() => setOpen(true)}
-        className="justify-start gap-2"
-      >
-        <Pencil className="h-3.5 w-3.5" aria-hidden />
-        Change site
-      </Button>
+      <div className="flex items-stretch gap-1.5 rounded-md border bg-card/40 p-1">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm bg-muted/60">
+          <Globe className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+        </span>
+        <div className="flex min-w-0 flex-1 flex-col justify-center px-1">
+          <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            Tracking
+          </span>
+          <a
+            href={currentUrl ?? "#"}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="flex items-center gap-1 truncate font-mono text-xs font-medium text-foreground hover:underline"
+            title={currentUrl ?? ""}
+          >
+            <span className="truncate">{display}</span>
+            <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground" />
+          </a>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => setOpen(true)}
+          className="h-9 shrink-0 gap-1.5 px-2 text-xs"
+          title="Switch to a different site"
+        >
+          <Pencil className="h-3.5 w-3.5" aria-hidden />
+          Change
+        </Button>
+      </div>
     );
   }
 
