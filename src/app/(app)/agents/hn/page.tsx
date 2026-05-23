@@ -3,13 +3,16 @@ import { format } from "date-fns";
 import { Newspaper } from "lucide-react";
 import { requireWorkspace } from "@/backend/workspace";
 import { prisma } from "@/backend/db";
-import { RunAgentButton } from "@/frontend/components/app/run-agent-button";
+import { HNRunButtons } from "@/frontend/components/app/hn-run-buttons";
 import { Badge } from "@/frontend/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/frontend/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/frontend/components/ui/tabs";
 import { parseHnMeta, hnKindLabel } from "@/shared/hn";
 
 export const metadata = { title: "Hacker News Agent" };
+
+/** Allow long HN runs (multiple LLM calls) on serverless hosts. */
+export const maxDuration = 120;
 
 function isPostDraft(meta: unknown) {
   const k = parseHnMeta(meta)?.hnKind;
@@ -59,16 +62,7 @@ export default async function HNAgentPage() {
             posts. No HN API key required — you approve and submit on news.ycombinator.com.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <RunAgentButton agentId="hn" label="Scan threads" input={{ mode: "scan" }} size="sm" />
-          <RunAgentButton
-            agentId="hn"
-            label="Generate posts"
-            input={{ mode: "posts" }}
-            size="sm"
-            variant="outline"
-          />
-        </div>
+        <HNRunButtons />
       </div>
 
       <Tabs defaultValue="posts" className="space-y-6">
@@ -140,14 +134,31 @@ export default async function HNAgentPage() {
                 <p className="text-sm text-muted-foreground">No runs yet.</p>
               ) : (
                 <ul className="divide-y text-sm">
-                  {runs.map((r) => (
-                    <li key={r.id} className="flex justify-between py-2">
-                      <span className="capitalize">{r.status.toLowerCase()}</span>
-                      <span className="text-muted-foreground">
-                        {format(r.startedAt, "MMM d · HH:mm")} · {r.creditsUsed} credits
-                      </span>
-                    </li>
-                  ))}
+                  {runs.map((r) => {
+                    const out = r.output as
+                      | { surfaced?: number; generated?: number; message?: string }
+                      | null;
+                    return (
+                      <li key={r.id} className="py-2">
+                        <div className="flex justify-between gap-2">
+                          <span className="capitalize">{r.status.toLowerCase()}</span>
+                          <span className="text-muted-foreground">
+                            {format(r.startedAt, "MMM d · HH:mm")} · {r.creditsUsed} credits
+                          </span>
+                        </div>
+                        {r.status === "SUCCESS" && out && (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {typeof out.surfaced === "number" && `Comments: ${out.surfaced} · `}
+                            {typeof out.generated === "number" && `Posts: ${out.generated}`}
+                            {out.message ? ` — ${out.message}` : null}
+                          </p>
+                        )}
+                        {r.status === "FAILED" && r.error && (
+                          <p className="mt-1 text-xs text-destructive">{r.error}</p>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </CardContent>

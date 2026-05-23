@@ -5,16 +5,53 @@ import { requireWorkspace } from "@/backend/workspace";
 import { executeAgent } from "@/backend/agents/base";
 import { getAgent } from "@/backend/agents/registry";
 
+const AGENT_TIMEOUT_MS = 110_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () =>
+        reject(
+          new Error(
+            `${label} timed out after ${Math.round(ms / 1000)}s. Try again or check Render logs.`
+          )
+        ),
+      ms
+    );
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      }
+    );
+  });
+}
+
 export async function runAgentAction(agentId: string, input?: unknown) {
   const { workspace } = await requireWorkspace();
   const agent = getAgent(agentId);
   if (!agent) return { ok: false as const, error: `Unknown agent: ${agentId}` };
 
-  const result = await executeAgent(agent, workspace.id, input ?? {});
-  revalidatePath(`/agents/${agentId}`);
-  revalidatePath("/dashboard");
-  revalidatePath("/actions");
-  return result;
+  try {
+    const result = await withTimeout(
+      executeAgent(agent, workspace.id, input ?? {}),
+      agentId === "hn" ? AGENT_TIMEOUT_MS : 60_000,
+      agent.title
+    );
+    revalidatePath(`/agents/${agentId}`);
+    revalidatePath("/dashboard");
+    revalidatePath("/actions");
+    revalidatePath("/content");
+    revalidatePath("/queue");
+    return result;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false as const, error: message, runId: "" };
+  }
 }
 
 export async function resolveActionItem(actionId: string, status: "DONE" | "DISMISSED" | "SNOOZED") {

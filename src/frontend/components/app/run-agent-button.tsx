@@ -34,7 +34,16 @@ export function RunAgentButton({
       className="transition-transform active:scale-[0.99]"
       onClick={() =>
         startTransition(async () => {
-          const res = await runAgentAction(agentId, input);
+          let res;
+          try {
+            res = await runAgentAction(agentId, input);
+          } catch (err) {
+            toast.error(`${meta?.label ?? agentId} run failed`, {
+              description:
+                err instanceof Error ? err.message : "Network or server error",
+            });
+            return;
+          }
           if (res.ok) {
             toast.success(`${meta?.label ?? agentId} run completed`, {
               description: "View the latest output below.",

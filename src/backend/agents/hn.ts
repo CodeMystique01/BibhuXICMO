@@ -1,14 +1,13 @@
 import { z } from "zod";
 import { prisma } from "@/backend/db";
 import { meteredGenerateObject, pickAvailableModel } from "@/backend/llm";
-import {
-  getHNFrontPage,
-  getHNItem,
-  searchHN,
-  type HNStory,
-} from "@/integrations/hackernews";
+import { getHNFrontPage, searchHN, type HNStory } from "@/integrations/hackernews";
 import { HN_SUBMIT_URL, hnItemUrl, parseHnMeta, type HNKind } from "@/shared/hn";
 import type { Agent, AgentContext } from "./base";
+import { upsertHNThread } from "./hn-db";
+
+/** Interactive runs stay fast enough for Render’s HTTP timeout. */
+const SCAN_STORY_LIMIT = 4;
 
 const hnReplySchema = z.object({
   relevance: z.number().min(0).max(1),
@@ -41,16 +40,10 @@ function dedupeStories(stories: HNStory[]): HNStory[] {
   return stories.filter((s) => !seen.has(s.objectID) && seen.add(s.objectID));
 }
 
-async function enrichStoryText(s: HNStory): Promise<string | undefined> {
-  if (s.story_text) return s.story_text;
-  const item = await getHNItem(s.objectID);
-  return item?.text;
-}
-
 export async function runHNCommentScan(
   ctx: AgentContext,
   input: HNAgentInput
-): Promise<{ surfaced: number }> {
+): Promise<{ surfaced: number; message?: string }> {
   const voice = ctx.voiceProfile as VoiceProfile | null;
 
   const keywords =
@@ -80,26 +73,17 @@ export async function runHNCommentScan(
   const model = pickAvailableModel(ctx.preferredModel ?? "gpt-4o-mini");
 
   if (!model) {
-    for (const s of unique.slice(0, 8)) {
+    for (const s of unique.slice(0, SCAN_STORY_LIMIT)) {
       const itemUrl = hnItemUrl(s.objectID);
-      await prisma.hNThread.upsert({
-        where: {
-          workspaceId_externalId: {
-            workspaceId: ctx.workspaceId,
-            externalId: s.objectID,
-          },
-        },
-        create: {
-          workspaceId: ctx.workspaceId,
-          externalId: s.objectID,
-          title: s.title,
-          itemUrl,
-          storyUrl: s.url ?? null,
-          points: s.points,
-          comments: s.num_comments,
-          relevance: 0.5,
-        },
-        update: { points: s.points, comments: s.num_comments },
+      await upsertHNThread({
+        workspaceId: ctx.workspaceId,
+        externalId: s.objectID,
+        title: s.title,
+        itemUrl,
+        storyUrl: s.url ?? null,
+        points: s.points,
+        comments: s.num_comments,
+        relevance: 0.5,
       });
       await prisma.actionItem.create({
         data: {
@@ -114,13 +98,17 @@ export async function runHNCommentScan(
         },
       });
     }
-    return { surfaced: Math.min(unique.length, 8) };
+    return {
+      surfaced: Math.min(unique.length, SCAN_STORY_LIMIT),
+      message:
+        "No LLM API key configured. Threads were saved under Discovered — add ANTHROPIC_API_KEY or OPENAI_API_KEY on Render to draft comments.",
+    };
   }
 
   let surfaced = 0;
-  for (const s of unique.slice(0, 8)) {
+  for (const s of unique.slice(0, SCAN_STORY_LIMIT)) {
     try {
-      const storyText = await enrichStoryText(s);
+      const storyText = s.story_text;
       const { object } = await meteredGenerateObject(
         [
           `Our positioning: ${voice?.positioning || ctx.industry || "unknown"}`,
@@ -145,28 +133,15 @@ export async function runHNCommentScan(
       );
 
       const itemUrl = hnItemUrl(s.objectID);
-      await prisma.hNThread.upsert({
-        where: {
-          workspaceId_externalId: {
-            workspaceId: ctx.workspaceId,
-            externalId: s.objectID,
-          },
-        },
-        create: {
-          workspaceId: ctx.workspaceId,
-          externalId: s.objectID,
-          title: s.title,
-          itemUrl,
-          storyUrl: s.url ?? null,
-          points: s.points,
-          comments: s.num_comments,
-          relevance: object.relevance,
-        },
-        update: {
-          relevance: object.relevance,
-          points: s.points,
-          comments: s.num_comments,
-        },
+      await upsertHNThread({
+        workspaceId: ctx.workspaceId,
+        externalId: s.objectID,
+        title: s.title,
+        itemUrl,
+        storyUrl: s.url ?? null,
+        points: s.points,
+        comments: s.num_comments,
+        relevance: object.relevance,
       });
 
       if (object.shouldComment && object.relevance >= 0.6) {
@@ -214,10 +189,16 @@ export async function runHNCommentScan(
 export async function runHNPostGeneration(
   ctx: AgentContext,
   opts: { skipIfRecent?: boolean } = {}
-): Promise<{ generated: number }> {
+): Promise<{ generated: number; message?: string }> {
   const voice = ctx.voiceProfile as VoiceProfile | null;
   const model = pickAvailableModel(ctx.preferredModel ?? "gpt-4o-mini");
-  if (!model) return { generated: 0 };
+  if (!model) {
+    return {
+      generated: 0,
+      message:
+        "No LLM API key configured. Add ANTHROPIC_API_KEY or OPENAI_API_KEY in Render → Environment.",
+    };
+  }
 
   if (opts.skipIfRecent) {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -321,7 +302,13 @@ export async function runHNPostGeneration(
   return { generated };
 }
 
-export const hackerNewsAgent: Agent<HNAgentInput, { surfaced: number; generated: number }> = {
+export type HNAgentOutput = {
+  surfaced: number;
+  generated: number;
+  message?: string;
+};
+
+export const hackerNewsAgent: Agent<HNAgentInput, HNAgentOutput> = {
   id: "hn",
   title: "Hacker News Agent",
   schedule: "0 */2 * * *",
@@ -330,20 +317,28 @@ export const hackerNewsAgent: Agent<HNAgentInput, { surfaced: number; generated:
     const mode = input.mode ?? "scan";
     let surfaced = 0;
     let generated = 0;
+    const messages: string[] = [];
 
     if (mode === "scan" || mode === "both") {
       const scan = await runHNCommentScan(ctx, input);
       surfaced = scan.surfaced;
+      if ("message" in scan && scan.message) messages.push(scan.message);
     }
 
     if (mode === "posts") {
       const posts = await runHNPostGeneration(ctx);
       generated = posts.generated;
+      if (posts.message) messages.push(posts.message);
     } else if (mode === "both") {
       const posts = await runHNPostGeneration(ctx, { skipIfRecent: true });
       generated = posts.generated;
+      if (posts.message) messages.push(posts.message);
     }
 
-    return { surfaced, generated };
+    return {
+      surfaced,
+      generated,
+      message: messages.length ? messages.join(" ") : undefined,
+    };
   },
 };
