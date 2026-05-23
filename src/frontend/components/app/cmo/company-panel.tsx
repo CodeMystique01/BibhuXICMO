@@ -11,6 +11,7 @@ import {
   Github,
   Instagram,
   Linkedin,
+  Loader2,
   Megaphone,
   Target,
   Twitter,
@@ -21,6 +22,7 @@ import { Badge } from "@/frontend/components/ui/badge";
 import { Button } from "@/frontend/components/ui/button";
 import { SiteQuickAdd } from "@/frontend/components/app/cmo/site-quick-add";
 import { CompetitorPill } from "@/frontend/components/app/cmo/competitor-pill";
+import { AutoRefreshWhenPending } from "@/frontend/components/app/cmo/auto-refresh-when-pending";
 import { Card, CardContent, CardHeader, CardTitle } from "@/frontend/components/ui/card";
 import type { CmoFastData, CmoSlowData } from "@/backend/agents/cmo-data";
 
@@ -60,6 +62,25 @@ export function CompanyPanel({ data }: { data: CompanyData }) {
           workspaceName={data.workspace.name}
           currentUrl={data.workspace.websiteUrl}
         />
+
+        {data.workspace.websiteUrl && isAnalysisPending(data) ? (
+          <>
+            <AutoRefreshWhenPending intervalMs={15000} />
+            <div className="flex items-start gap-2 rounded-md border border-primary/30 bg-primary/5 p-3 text-xs">
+            <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
+            <div className="space-y-0.5">
+              <div className="font-semibold text-foreground">
+                Analyzing {stripUrlScheme(data.workspace.websiteUrl)}…
+              </div>
+              <p className="text-muted-foreground">
+                Claude is reading the site, picking competitors + social
+                handles, and Apify is fetching Ahrefs metrics. Usually 30-60s.
+                The page refreshes automatically when ready.
+              </p>
+            </div>
+          </div>
+          </>
+        ) : null}
 
         <SocialHandlesRow voice={data.voice ?? null} />
 
@@ -431,4 +452,22 @@ function SocialHandlesRow({ voice }: { voice: CompanyVoice | null }) {
 
 function stripAt(v: string): string {
   return v.startsWith("@") ? v.slice(1) : v;
+}
+
+function isAnalysisPending(data: CompanyData): boolean {
+  const v = data.voice;
+  const hasPositioning = !!v?.positioning?.trim();
+  const hasCompetitors = (v?.competitors?.length ?? 0) > 0;
+  const hasHandles =
+    !!v?.socialHandles &&
+    Object.values(v.socialHandles).some(
+      (h) => typeof h === "string" && h.trim().length > 0
+    );
+  // Pending if we have a URL but none of the LLM-generated artifacts have
+  // landed yet.
+  return !hasPositioning && !hasCompetitors && !hasHandles;
+}
+
+function stripUrlScheme(u: string): string {
+  return u.replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/$/, "");
 }
