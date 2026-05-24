@@ -303,8 +303,9 @@ function BulkForm({ geminiAvailable }: { geminiAvailable: boolean }) {
             <p className="mt-0.5 leading-relaxed text-muted-foreground">
               {geminiAvailable ? (
                 <>
-                  Adds a 16:9 hero illustration per draft via Google&rsquo;s
-                  Gemini image model. Adds ~10s per keyword.
+                  Adds a 16:9 hero plus per-item images for listicles (one per item)
+                  or 2-3 section images for descriptive blogs. Generated in
+                  parallel via Gemini — adds ~30-60s per keyword.
                 </>
               ) : (
                 <>

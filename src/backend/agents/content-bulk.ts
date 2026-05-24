@@ -20,7 +20,12 @@ import { prisma } from "@/backend/db";
 import { meteredGenerateObject, pickAvailableModel } from "@/backend/llm";
 import type { CmoVoiceProfile } from "@/backend/agents/cmo-data";
 import { ContentChannel } from "@prisma/client";
-import { generateHeroImage } from "@/backend/image-gen";
+import {
+  generateHeroImage,
+  generateItemImage,
+  generateSectionImage,
+  type GeneratedImage,
+} from "@/backend/image-gen";
 
 export type BlogType = "listicle" | "descriptive";
 
@@ -186,28 +191,37 @@ export async function generateBulkBlog(
     };
   }
 
-  // Optional hero image. Generated in parallel-friendly way: failures are
-  // swallowed so the draft is still saved with text-only content.
-  let heroImage: { url: string; alt: string } | null = null;
+  // Image generation — runs in parallel across all the images a given draft
+  // wants (1 hero + N item images for listicles, 1 hero + 2-3 section
+  // images for descriptive). Per-image failures are swallowed so the
+  // draft is still saved if Gemini misbehaves on one of them.
+  let imageStats = { requested: 0, generated: 0 };
   if (input.includeImage) {
-    try {
-      const img = await generateHeroImage({
+    if (input.blogType === "listicle") {
+      const enriched = await embedListicleImages({
+        body,
         title,
         keyword: input.keyword,
-        blogType: input.blogType,
+        items: listicleItemsFromMeta(meta),
       });
-      if (img) heroImage = img;
-    } catch (err) {
-      console.warn(
-        `[content-bulk] hero image failed for "${input.keyword}":`,
-        (err as Error).message
-      );
+      body = enriched.body;
+      imageStats = enriched.stats;
+      if (enriched.heroImageUrl) meta = { ...meta, heroImage: enriched.heroImageUrl };
+    } else {
+      const enriched = await embedDescriptiveImages({
+        body,
+        title,
+        keyword: input.keyword,
+      });
+      body = enriched.body;
+      imageStats = enriched.stats;
+      if (enriched.heroImageUrl) meta = { ...meta, heroImage: enriched.heroImageUrl };
     }
-  }
-
-  if (heroImage) {
-    body = `![${heroImage.alt}](${heroImage.url})\n\n${body}`;
-    meta = { ...meta, heroImage: heroImage.url };
+    meta = {
+      ...meta,
+      imagesRequested: imageStats.requested,
+      imagesGenerated: imageStats.generated,
+    };
   }
 
   const created = await prisma.contentDraft.create({
@@ -305,4 +319,152 @@ function cleanDomain(raw: string): string {
     .replace(/^https?:\/\//, "")
     .replace(/^www\./, "")
     .replace(/\/.*$/, "");
+}
+
+// ---------------------------------------------------------------------------
+//  Image embedding helpers
+// ---------------------------------------------------------------------------
+
+/** Pulled from the meta we stashed when rendering the listicle. */
+function listicleItemsFromMeta(
+  meta: Record<string, unknown>
+): Array<{ rank: number; name: string; domain: string; body?: string }> {
+  const raw = (meta as { items?: unknown }).items;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((it) => {
+      const r = it && typeof it === "object" ? (it as Record<string, unknown>) : {};
+      return {
+        rank: typeof r.rank === "number" ? r.rank : 0,
+        name: typeof r.name === "string" ? r.name : "",
+        domain: typeof r.domain === "string" ? r.domain : "",
+        body: typeof r.body === "string" ? r.body : undefined,
+      };
+    })
+    .filter((x) => x.name && x.rank > 0);
+}
+
+/** Max images per draft so a single batch can't burn unbounded quota. */
+const MAX_ITEM_IMAGES = 10;
+const MAX_SECTION_IMAGES = 3;
+
+async function embedListicleImages(args: {
+  body: string;
+  title: string;
+  keyword: string;
+  items: Array<{ rank: number; name: string; domain: string; body?: string }>;
+}): Promise<{ body: string; stats: { requested: number; generated: number }; heroImageUrl: string | null }> {
+  const itemsToImage = args.items.slice(0, MAX_ITEM_IMAGES);
+  const requested = 1 + itemsToImage.length;
+
+  const [hero, ...itemImages] = await Promise.all([
+    generateHeroImage({ title: args.title, keyword: args.keyword, blogType: "listicle" }),
+    ...itemsToImage.map((it) =>
+      generateItemImage({
+        itemName: it.name,
+        itemDescription: it.body ?? `${it.name} — item #${it.rank} in ${args.keyword}`,
+        parentKeyword: args.keyword,
+        rank: it.rank,
+      })
+    ),
+  ]);
+
+  let body = args.body;
+
+  // Hero up top.
+  if (hero) {
+    body = `![${hero.alt}](${hero.url})\n\n${body}`;
+  }
+
+  // Insert each item image immediately AFTER its '## N. [Name](url)' heading.
+  // We match the heading line, then inject the image on the next line so the
+  // markdown renderer puts the image right under the item title.
+  let generated = hero ? 1 : 0;
+  for (let i = 0; i < itemsToImage.length; i++) {
+    const item = itemsToImage[i];
+    const img = itemImages[i];
+    if (!img) continue;
+    const escaped = escapeForRegex(item.name);
+    const headingRe = new RegExp(
+      `^(##\\s+${item.rank}\\.\\s*\\[${escaped}\\]\\([^)]+\\))$`,
+      "m"
+    );
+    body = body.replace(
+      headingRe,
+      `$1\n\n![${img.alt}](${img.url})`
+    );
+    generated++;
+  }
+
+  return {
+    body,
+    stats: { requested, generated },
+    heroImageUrl: hero?.url ?? null,
+  };
+}
+
+async function embedDescriptiveImages(args: {
+  body: string;
+  title: string;
+  keyword: string;
+}): Promise<{ body: string; stats: { requested: number; generated: number }; heroImageUrl: string | null }> {
+  // Pull H2 headings (skip the article H1 at the top).
+  const headings: Array<{ raw: string; text: string; index: number }> = [];
+  const lines = args.body.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^##\s+(.+)$/);
+    if (m) headings.push({ raw: lines[i], text: m[1].trim(), index: i });
+  }
+
+  // Pick up to MAX_SECTION_IMAGES headings, spread evenly across the article
+  // so images aren't all clumped at the top.
+  const picks: Array<{ heading: { raw: string; text: string; index: number }; snippet: string }> = [];
+  if (headings.length > 0) {
+    const stride = Math.max(1, Math.floor(headings.length / MAX_SECTION_IMAGES));
+    for (let i = 0; i < headings.length && picks.length < MAX_SECTION_IMAGES; i += stride) {
+      const h = headings[i];
+      const snippet = lines.slice(h.index + 1, h.index + 6).join(" ").trim();
+      picks.push({ heading: h, snippet });
+    }
+  }
+
+  const requested = 1 + picks.length;
+  const [hero, ...sectionImages] = await Promise.all([
+    generateHeroImage({ title: args.title, keyword: args.keyword, blogType: "descriptive" }),
+    ...picks.map((p) =>
+      generateSectionImage({
+        sectionTitle: p.heading.text,
+        parentKeyword: args.keyword,
+        bodySnippet: p.snippet,
+      })
+    ),
+  ]);
+
+  let body = args.body;
+  if (hero) {
+    body = `![${hero.alt}](${hero.url})\n\n${body}`;
+  }
+  let generated = hero ? 1 : 0;
+
+  // Insert section images right after each picked heading. Walk in reverse
+  // order so line offsets stay valid across substitutions.
+  const reversedPicks = [...picks.entries()].reverse();
+  for (const [i, pick] of reversedPicks) {
+    const img: GeneratedImage | null = sectionImages[i] ?? null;
+    if (!img) continue;
+    const escaped = escapeForRegex(pick.heading.raw);
+    const re = new RegExp(`^${escaped}$`, "m");
+    body = body.replace(re, `${pick.heading.raw}\n\n![${img.alt}](${img.url})`);
+    generated++;
+  }
+
+  return {
+    body,
+    stats: { requested, generated },
+    heroImageUrl: hero?.url ?? null,
+  };
+}
+
+function escapeForRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
