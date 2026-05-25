@@ -112,6 +112,7 @@ model Workspace {
   igThreads        IGThread[]
   igCreators       IGCreator[]
   igCampaigns      IGCampaign[]
+  ytCreators       YTCreator[]
   igNegotiations   IGNegotiation[]
   contentDrafts    ContentDraft[]
   actionItems      ActionItem[]
@@ -402,6 +403,47 @@ model IGCreator {
   negotiations IGNegotiation[]
 
   @@unique([workspaceId, handle])
+  @@index([workspaceId, discoveredAt])
+}
+
+// --------------------------------------------------------------------------
+// YouTube creators (QuickAds-style YT search engine)
+// --------------------------------------------------------------------------
+model YTCreator {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  /** YouTube channel ID (UC...). Stable across renames. */
+  channelId       String
+  /** Public channel handle (@username) when present. */
+  handle          String?
+  title           String
+  description     String?   @db.Text
+  subscribers     Int       @default(0)
+  videoCount      Int?
+  viewCount       BigInt?
+  country         String? // ISO 2-letter
+  language        String? // BCP-47 (e.g. "en", "hi-IN")
+  category        String?
+  email           String? // extracted from description
+  thumbnailUrl    String?
+  bannerUrl       String?
+  channelUrl      String
+  customUrl       String?
+  isVerified      Boolean   @default(false)
+  /** Heuristic: true when the channel looks like a real creator, not a corporate / official brand channel. */
+  isCreator       Boolean   @default(true)
+  /** 0-100 — same band-mapping idea as IG: based on subs, video activity, recency. */
+  qualityScore    Int?
+  /** Free-text reason emitted by the smart-creator heuristic (e.g. "Verified brand"). */
+  detectionNote   String?
+  fit             Float     @default(0)
+  notes           String?   @db.Text
+  lastContactAt   DateTime?
+  discoveredAt    DateTime  @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, channelId])
   @@index([workspaceId, discoveredAt])
 }
 

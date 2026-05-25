@@ -104,6 +104,21 @@ const envSchema = z.object({
     .string()
     .default("afanasenko~instagram-profile-scraper"),
 
+  /**
+   * Optional dedicated Apify token for the YouTube creator discovery
+   * agent. Falls back to APIFY_TOKEN when unset — useful when you want
+   * YT scraping to bill against a separate Apify account.
+   */
+  APIFY_YT_TOKEN: z.string().optional(),
+  /**
+   * Apify actor id for YouTube creator search. Returns videos +
+   * channel metadata for a list of search keywords; we group results
+   * by channel and apply a smart-creator heuristic to filter out
+   * corporate / brand channels.
+   * Default: `streamers~youtube-scraper`.
+   */
+  APIFY_YT_ACTOR_ID: z.string().default("streamers~youtube-scraper"),
+
   SENTRY_DSN: z.string().optional(),
 
   /** Dev-only override: set to "1" to unlock every plan-gated feature and
