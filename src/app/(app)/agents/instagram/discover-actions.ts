@@ -6,6 +6,7 @@ import { requireWorkspace } from "@/backend/workspace";
 import { upsertIGCreator } from "@/backend/agents/instagram-db";
 import {
   startIGNetworkRun,
+  startIGKeywordDiscoveryRun,
   getIGRunStatus,
   fetchIGNetworkDataset,
   isTerminalIGStatus,
@@ -20,11 +21,55 @@ type StartInput = {
   minFollowers?: number;
   maxFollowers?: number;
   maxProfiles?: number;
+  /** Free-text niche keywords used for Mode 4 fallback. */
+  niche?: string;
+  /** Two-letter location code; maps to profileLanguage filter. */
+  location?: string;
+};
+
+type StartKeywordInput = {
+  niche: string;
+  minFollowers?: number;
+  maxFollowers?: number;
+  maxProfiles?: number;
+  location?: string;
 };
 
 export type StartIGDiscoveryResult =
-  | { ok: true; runId: string; datasetId: string; status: string; actor: string }
+  | {
+      ok: true;
+      runId: string;
+      datasetId: string;
+      status: string;
+      actor: string;
+      mode: "networkExpansion" | "keywordDiscovery";
+    }
   | { ok: false; error: string };
+
+/**
+ * Map "Any Location" / country code to the actor's `profileLanguage`
+ * filter. The actor doesn't support a country filter directly outside
+ * Mode 5 (location discovery) — using language is the next best thing
+ * for filtering by an audience's region.
+ */
+function locationToLanguage(loc: string | undefined): string | undefined {
+  if (!loc || loc === "ANY") return undefined;
+  const map: Record<string, string> = {
+    US: "English",
+    UK: "English",
+    GB: "English",
+    CA: "English",
+    AU: "English",
+    IN: "English",
+    SG: "English",
+    AE: "English",
+    DE: "German",
+    FR: "French",
+    BR: "Portuguese",
+    ES: "Spanish",
+  };
+  return map[loc];
+}
 
 /**
  * Kicks off an Apify network-expansion run and returns immediately
@@ -43,12 +88,14 @@ export async function startIGSeedDiscoveryAction(
   if (seeds.length === 0) {
     return { ok: false, error: "Enter at least one seed account." };
   }
+  const language = locationToLanguage(input.location);
   try {
     const handle = await startIGNetworkRun({
       seeds,
       minFollowers: input.minFollowers,
       maxFollowers: input.maxFollowers,
       maxProfiles: input.maxProfiles ?? 100,
+      language,
     });
     return {
       ok: true,
@@ -56,6 +103,7 @@ export async function startIGSeedDiscoveryAction(
       datasetId: handle.datasetId,
       status: handle.status,
       actor: handle.actor,
+      mode: "networkExpansion",
     };
   } catch (err) {
     if (err instanceof ApifyIGNotConfiguredError) {
@@ -68,6 +116,58 @@ export async function startIGSeedDiscoveryAction(
     return {
       ok: false,
       error: err instanceof Error ? err.message : "Failed to start discovery.",
+    };
+  }
+}
+
+/**
+ * Mode 4 keyword-discovery — used as an automatic fallback when
+ * networkExpansion returns 0 profiles, and as the primary path when the
+ * user only provides niche keywords (no seeds).
+ */
+export async function startIGKeywordDiscoveryAction(
+  input: StartKeywordInput
+): Promise<StartIGDiscoveryResult> {
+  await requireWorkspace();
+  const keywords = input.niche
+    .split(/[,;\n]+/)
+    .map((k) => k.trim())
+    .filter((k) => k.length >= 2)
+    .slice(0, 8);
+  if (keywords.length === 0) {
+    return {
+      ok: false,
+      error: "Enter at least one niche keyword for keyword discovery.",
+    };
+  }
+  const language = locationToLanguage(input.location);
+  try {
+    const handle = await startIGKeywordDiscoveryRun({
+      keywords,
+      minFollowers: input.minFollowers,
+      maxFollowers: input.maxFollowers,
+      maxProfiles: input.maxProfiles ?? 100,
+      language,
+    });
+    return {
+      ok: true,
+      runId: handle.runId,
+      datasetId: handle.datasetId,
+      status: handle.status,
+      actor: handle.actor,
+      mode: "keywordDiscovery",
+    };
+  } catch (err) {
+    if (err instanceof ApifyIGNotConfiguredError) {
+      return {
+        ok: false,
+        error:
+          "Set APIFY_TOKEN (or APIFY_IG_TOKEN) in Render → Environment.",
+      };
+    }
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Keyword discovery failed.",
     };
   }
 }
@@ -155,6 +255,7 @@ export async function pollIGDiscoveryAction(args: {
       isBusiness: !!p.category,
       externalUrl: p.externalUrl,
       profileUrl: p.profileUrl,
+      profilePicture: p.profilePicture,
       // Use qualityScore/100 as a stand-in for "brand fit" until we layer
       // an LLM ranker on top. Higher Quality = higher fit.
       fit: p.qualityScore / 100,

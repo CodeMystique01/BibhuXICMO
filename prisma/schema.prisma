@@ -391,6 +391,7 @@ model IGCreator {
   isVerified      Boolean   @default(false)
   isBusiness      Boolean   @default(false)
   profileUrl      String
+  profilePicture  String?
   externalUrl     String?
   fit             Float     @default(0) // 0–1 brand fit (LLM-scored)
   notes           String?   @db.Text

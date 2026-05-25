@@ -57,6 +57,7 @@ export async function upsertIGCreator(data: {
   isBusiness?: boolean;
   externalUrl?: string | null;
   profileUrl: string;
+  profilePicture?: string | null;
   fit: number;
   notes?: string | null;
 }) {
@@ -77,6 +78,7 @@ export async function upsertIGCreator(data: {
     isBusiness: data.isBusiness ?? false,
     externalUrl: data.externalUrl ?? null,
     profileUrl: data.profileUrl,
+    profilePicture: data.profilePicture ?? null,
     fit: data.fit,
     notes: data.notes ?? null,
   };
@@ -94,6 +96,8 @@ export async function upsertIGCreator(data: {
     isVerified: data.isVerified ?? undefined,
     isBusiness: data.isBusiness ?? undefined,
     externalUrl: data.externalUrl ?? undefined,
+    profileUrl: data.profileUrl,
+    profilePicture: data.profilePicture ?? undefined,
     fit: data.fit,
     notes: data.notes ?? undefined,
   };

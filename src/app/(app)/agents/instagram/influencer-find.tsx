@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import {
-  Download,
+  CheckCircle2,
   ExternalLink,
   FileSpreadsheet,
   FileText,
@@ -30,42 +30,19 @@ import { Label } from "@/frontend/components/ui/label";
 import { Textarea } from "@/frontend/components/ui/textarea";
 import { Badge } from "@/frontend/components/ui/badge";
 import { Progress } from "@/frontend/components/ui/progress";
+import { cn } from "@/shared/utils";
 import {
   startIGSeedDiscoveryAction,
+  startIGKeywordDiscoveryAction,
   pollIGDiscoveryAction,
   recordIGDmSentAction,
   deleteIGCreatorAction,
   clearIGCreatorsAction,
 } from "./discover-actions";
 
-const POLL_INTERVAL_MS = 4_000;
-const MAX_RUN_MS = 15 * 60 * 1000; // 15 minutes
-const RUN_STORAGE_KEY = "ig-discovery-run";
-
-type RunInfo = {
-  runId: string;
-  datasetId: string;
-  startedAt: number;
-  seeds: string[];
-};
-
-function fmtElapsed(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  const m = Math.floor(s / 60);
-  const r = s % 60;
-  return `${m}:${r.toString().padStart(2, "0")}`;
-}
-
-function prettyStatus(s: string | null): string {
-  if (!s) return "Starting…";
-  if (s === "READY") return "Queued";
-  if (s === "RUNNING") return "Scraping creators";
-  if (s === "SUCCEEDED") return "Finishing up";
-  if (s === "FAILED") return "Failed";
-  if (s === "ABORTED") return "Aborted";
-  if (s === "TIMED-OUT") return "Timed out";
-  return s;
-}
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 export type CreatorRow = {
   id: string;
@@ -80,8 +57,49 @@ export type CreatorRow = {
   category: string | null;
   isVerified: boolean;
   profileUrl: string;
+  profilePicture: string | null;
   lastDmAt: Date | null;
 };
+
+type DiscoveryMode = "networkExpansion" | "keywordDiscovery";
+
+type RunInfo = {
+  runId: string;
+  datasetId: string;
+  mode: DiscoveryMode;
+  startedAt: number;
+  seeds: string[];
+  /** Snapshot of the niche / filters so we can fire the Mode 4 fallback. */
+  niche: string;
+  location: string;
+  minFollowers?: number;
+  maxFollowers?: number;
+  maxProfiles?: number;
+  /** Set after we already fell back, so we don't loop. */
+  fellBack?: boolean;
+};
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const POLL_INTERVAL_MS = 4_000;
+const MAX_RUN_MS = 15 * 60 * 1000; // 15 minutes
+const RUN_STORAGE_KEY = "ig-discovery-run";
+
+const LOCATIONS: Array<{ value: string; label: string }> = [
+  { value: "ANY", label: "Any Location" },
+  { value: "US", label: "United States" },
+  { value: "UK", label: "United Kingdom" },
+  { value: "IN", label: "India" },
+  { value: "CA", label: "Canada" },
+  { value: "AU", label: "Australia" },
+  { value: "DE", label: "Germany" },
+  { value: "FR", label: "France" },
+  { value: "BR", label: "Brazil" },
+  { value: "AE", label: "UAE" },
+  { value: "SG", label: "Singapore" },
+];
 
 const TEMPLATE_VARS = [
   { key: "name", label: "{name}" },
@@ -91,10 +109,15 @@ const TEMPLATE_VARS = [
 ] as const;
 
 const DEFAULT_TEMPLATE =
-  "Hey {name}! I came across your profile and love the content you create. " +
-  "I think there's a great opportunity for us to collaborate. " +
-  "Would you be open to a quick chat about a potential partnership? " +
+  "Hey {name}!\n\n" +
+  "I came across your profile and love the content you create. " +
+  "I think there's a great opportunity for us to collaborate.\n\n" +
+  "Would you be open to a quick chat about a potential partnership?\n\n" +
   "Looking forward to hearing from you!";
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 function fmtNumber(n: number | null | undefined): string {
   if (n === null || n === undefined) return "—";
@@ -108,6 +131,25 @@ function fmtPct(n: number | null | undefined): string {
   return `${(n * 100).toFixed(2)}%`;
 }
 
+function fmtElapsed(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${r.toString().padStart(2, "0")}`;
+}
+
+function prettyStatus(s: string | null, mode: DiscoveryMode): string {
+  const prefix = mode === "keywordDiscovery" ? "Keyword discovery" : "Network expansion";
+  if (!s) return `${prefix} · Starting…`;
+  if (s === "READY") return `${prefix} · Queued`;
+  if (s === "RUNNING") return `${prefix} · Scraping creators`;
+  if (s === "SUCCEEDED") return `${prefix} · Finishing up`;
+  if (s === "FAILED") return `${prefix} · Failed`;
+  if (s === "ABORTED") return `${prefix} · Aborted`;
+  if (s === "TIMED-OUT") return `${prefix} · Timed out`;
+  return `${prefix} · ${s}`;
+}
+
 function renderTemplate(tpl: string, c: CreatorRow): string {
   return tpl
     .replace(/\{name\}/gi, c.fullName || c.handle)
@@ -116,11 +158,23 @@ function renderTemplate(tpl: string, c: CreatorRow): string {
     .replace(/\{category\}/gi, c.category || "creator");
 }
 
-function qualityColor(score: number | null): string {
+function qualityLabelFromScore(score: number | null): string | null {
+  if (score === null) return null;
+  if (score >= 80) return "Excellent";
+  if (score >= 60) return "Good";
+  if (score >= 35) return "Average";
+  return "Poor";
+}
+
+function qualityClasses(score: number | null): string {
   if (score === null) return "bg-muted text-muted-foreground";
-  if (score >= 70) return "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-200";
-  if (score >= 50) return "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200";
-  return "bg-rose-100 text-rose-900 dark:bg-rose-900/40 dark:text-rose-200";
+  if (score >= 80)
+    return "bg-emerald-500/15 text-emerald-700 ring-1 ring-emerald-500/30 dark:text-emerald-300";
+  if (score >= 60)
+    return "bg-blue-500/15 text-blue-700 ring-1 ring-blue-500/30 dark:text-blue-300";
+  if (score >= 35)
+    return "bg-amber-500/15 text-amber-700 ring-1 ring-amber-500/30 dark:text-amber-300";
+  return "bg-rose-500/15 text-rose-700 ring-1 ring-rose-500/30 dark:text-rose-300";
 }
 
 function csvEscape(v: string | number | null | undefined): string {
@@ -143,6 +197,28 @@ function downloadBlob(blob: Blob, filename: string) {
   }, 1000);
 }
 
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function initials(name: string | null, handle: string): string {
+  const src = (name || handle).trim();
+  if (!src) return "?";
+  const parts = src.split(/\s+/);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+  return src.slice(0, 2).toUpperCase();
+}
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+
 export function InfluencerFind({
   initialCreators,
   hasApifyToken,
@@ -150,21 +226,28 @@ export function InfluencerFind({
   initialCreators: CreatorRow[];
   hasApifyToken: boolean;
 }) {
+  // -------------------- Form state --------------------
   const [seedsText, setSeedsText] = useState("");
-  const [minFollowers, setMinFollowers] = useState("1000");
-  const [maxFollowers, setMaxFollowers] = useState("250000");
   const [maxProfiles, setMaxProfiles] = useState("100");
-  const [categoryHint, setCategoryHint] = useState("");
+  const [minFollowers, setMinFollowers] = useState("");
+  const [maxFollowers, setMaxFollowers] = useState("");
+  const [niche, setNiche] = useState("");
+  const [location, setLocation] = useState<string>("ANY");
+
+  // -------------------- Template state --------------------
   const [template, setTemplate] = useState(DEFAULT_TEMPLATE);
+
+  // -------------------- Run state --------------------
   const [creators, setCreators] = useState<CreatorRow[]>(initialCreators);
   const [pending, startTransition] = useTransition();
   const [run, setRun] = useState<RunInfo | null>(null);
   const [runStatus, setRunStatus] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
+
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tickTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Restore an in-progress run after a page refresh.
+  // ---------- Run persistence (survives page refresh) ----------
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
@@ -189,13 +272,11 @@ export function InfluencerFind({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Tick the elapsed timer once per second while a run is in flight.
+  // ---------- Live elapsed timer ----------
   useEffect(() => {
     if (!run) {
-      if (tickTimerRef.current) {
-        clearInterval(tickTimerRef.current);
-        tickTimerRef.current = null;
-      }
+      if (tickTimerRef.current) clearInterval(tickTimerRef.current);
+      tickTimerRef.current = null;
       return;
     }
     setElapsedMs(Date.now() - run.startedAt);
@@ -215,36 +296,7 @@ export function InfluencerFind({
     };
   }, []);
 
-  const previewCreator: CreatorRow = useMemo(
-    () =>
-      creators[0] ??
-      ({
-        id: "preview",
-        handle: "sample_creator",
-        fullName: "Sample Creator",
-        bio: null,
-        followers: 12500,
-        following: null,
-        engagementRate: 0.038,
-        qualityScore: 72,
-        email: null,
-        category: "Lifestyle",
-        isVerified: false,
-        profileUrl: "https://instagram.com/sample_creator",
-        lastDmAt: null,
-      } as CreatorRow),
-    [creators]
-  );
-
-  const livePreview = useMemo(
-    () => renderTemplate(template, previewCreator),
-    [template, previewCreator]
-  );
-
-  function insertVariable(label: string) {
-    setTemplate((t) => `${t}${t && !t.endsWith(" ") ? " " : ""}${label} `);
-  }
-
+  // ---------- Run helpers ----------
   function persistRun(r: RunInfo | null) {
     if (typeof window === "undefined") return;
     if (r) window.localStorage.setItem(RUN_STORAGE_KEY, JSON.stringify(r));
@@ -262,13 +314,51 @@ export function InfluencerFind({
     persistRun(null);
   }
 
+  async function fallbackToKeywordDiscovery(prev: RunInfo) {
+    if (!prev.niche.trim()) {
+      toast.warning("No creators found", {
+        description:
+          "Network expansion returned 0 results. Add Niche / Keywords and try again, or use 3–5 seeds in the same niche.",
+      });
+      clearRunState();
+      if (typeof window !== "undefined") window.location.reload();
+      return;
+    }
+    toast.info("Auto-falling back to keyword discovery", {
+      description: `No similar profiles around the seed graph. Searching by "${prev.niche.slice(0, 60)}" instead.`,
+    });
+    const res = await startIGKeywordDiscoveryAction({
+      niche: prev.niche,
+      minFollowers: prev.minFollowers,
+      maxFollowers: prev.maxFollowers,
+      maxProfiles: prev.maxProfiles,
+      location: prev.location,
+    });
+    if (!res.ok) {
+      toast.error("Keyword fallback failed", { description: res.error });
+      clearRunState();
+      return;
+    }
+    const next: RunInfo = {
+      ...prev,
+      runId: res.runId,
+      datasetId: res.datasetId,
+      mode: "keywordDiscovery",
+      startedAt: Date.now(),
+      fellBack: true,
+    };
+    setRun(next);
+    setRunStatus(res.status);
+    persistRun(next);
+    kickoffPolling(next);
+  }
+
   function kickoffPolling(r: RunInfo) {
     const tick = async () => {
-      // Hard ceiling — surface a timeout error instead of polling forever.
       if (Date.now() - r.startedAt > MAX_RUN_MS) {
         toast.error("Discovery timed out", {
           description:
-            "The Apify run is taking longer than 15 minutes. Check the Apify console — your results may still arrive later.",
+            "The Apify run is taking longer than 15 minutes. Check the Apify console — results may still arrive later.",
         });
         clearRunState();
         return;
@@ -285,6 +375,16 @@ export function InfluencerFind({
         }
         setRunStatus(res.status);
         if (res.finished) {
+          // Mode 3 returned 0 + we haven't already fallen back? → auto Mode 4
+          if (
+            res.found === 0 &&
+            r.mode === "networkExpansion" &&
+            !r.fellBack &&
+            r.niche.trim()
+          ) {
+            void fallbackToKeywordDiscovery(r);
+            return;
+          }
           toast.success(`Found ${res.found} creators`, {
             description:
               res.saved > 0
@@ -296,8 +396,6 @@ export function InfluencerFind({
           return;
         }
       } catch (err) {
-        // Transient network blips shouldn't kill the polling loop — log once
-        // and keep trying. The MAX_RUN_MS guard will eventually stop it.
         console.warn("[ig] poll error:", err);
       }
       pollTimerRef.current = setTimeout(tick, POLL_INTERVAL_MS);
@@ -305,31 +403,50 @@ export function InfluencerFind({
     pollTimerRef.current = setTimeout(tick, POLL_INTERVAL_MS);
   }
 
+  // ---------- Submit ----------
   async function onDiscover() {
     const seeds = seedsText
-      .split(/[\n,]+/)
+      .split(/[,\n;]+/)
       .map((s) => s.replace(/^@/, "").trim())
       .filter(Boolean);
-    if (seeds.length === 0) {
-      toast.error("Add at least one seed account.");
-      return;
-    }
+
     if (!hasApifyToken) {
       toast.error("Apify token missing", {
-        description:
-          "Set APIFY_TOKEN (or APIFY_IG_TOKEN) in Render → Environment.",
+        description: "Set APIFY_TOKEN (or APIFY_IG_TOKEN) in Render → Environment.",
       });
       return;
     }
+
+    const filters = {
+      minFollowers: minFollowers ? parseInt(minFollowers, 10) : undefined,
+      maxFollowers: maxFollowers ? parseInt(maxFollowers, 10) : undefined,
+      maxProfiles: maxProfiles ? parseInt(maxProfiles, 10) : 100,
+    };
+
+    const goKeyword = seeds.length === 0 && niche.trim().length > 0;
+    if (seeds.length === 0 && !goKeyword) {
+      toast.error("Add seed accounts or a niche", {
+        description:
+          "Enter 3–5 Instagram handles, or describe the niche in Niche / Keywords.",
+      });
+      return;
+    }
+
     setRunStatus("Starting…");
     startTransition(async () => {
       try {
-        const res = await startIGSeedDiscoveryAction({
-          seeds,
-          minFollowers: minFollowers ? parseInt(minFollowers, 10) : undefined,
-          maxFollowers: maxFollowers ? parseInt(maxFollowers, 10) : undefined,
-          maxProfiles: maxProfiles ? parseInt(maxProfiles, 10) : undefined,
-        });
+        const res = goKeyword
+          ? await startIGKeywordDiscoveryAction({
+              niche,
+              ...filters,
+              location,
+            })
+          : await startIGSeedDiscoveryAction({
+              seeds,
+              ...filters,
+              niche,
+              location,
+            });
         if (!res.ok) {
           setRunStatus(null);
           toast.error("Could not start discovery", { description: res.error });
@@ -338,15 +455,26 @@ export function InfluencerFind({
         const r: RunInfo = {
           runId: res.runId,
           datasetId: res.datasetId,
+          mode: res.mode,
           startedAt: Date.now(),
           seeds,
+          niche,
+          location,
+          minFollowers: filters.minFollowers,
+          maxFollowers: filters.maxFollowers,
+          maxProfiles: filters.maxProfiles,
         };
         setRun(r);
         setRunStatus(res.status);
         persistRun(r);
-        toast.success("Scraper started", {
-          description: `Run ${res.runId.slice(0, 8)}… on ${res.actor}. Polling every 4s — this usually takes 1–5 min.`,
-        });
+        toast.success(
+          res.mode === "keywordDiscovery"
+            ? "Keyword discovery started"
+            : "Network expansion started",
+          {
+            description: `Polling every 4s · this usually takes 1–5 minutes.`,
+          }
+        );
         kickoffPolling(r);
       } catch (err) {
         setRunStatus(null);
@@ -361,7 +489,7 @@ export function InfluencerFind({
     if (!run) return;
     if (
       !confirm(
-        "Stop polling for this run? The Apify job will keep running on the server and you'll be billed for whatever profiles it analyzes before it finishes. Restart the discovery page later to see results."
+        "Stop polling for this run? The Apify job will keep running on the server and you'll be billed for any profiles it analyzes before it finishes. Refresh this page later to pick up results."
       )
     ) {
       return;
@@ -370,11 +498,39 @@ export function InfluencerFind({
     toast.info("Stopped polling. The Apify job will finish in the background.");
   }
 
-  const runActive = !!run;
-  const progressPct = runActive
-    ? Math.min(95, 5 + Math.round((elapsedMs / MAX_RUN_MS) * 90))
-    : 0;
+  // ---------- Template ----------
+  function insertVariable(label: string) {
+    setTemplate((t) => `${t}${t && !t.endsWith(" ") ? " " : ""}${label} `);
+  }
 
+  const previewCreator: CreatorRow = useMemo(
+    () =>
+      creators[0] ??
+      ({
+        id: "preview",
+        handle: "sample_creator",
+        fullName: "Sample Creator",
+        bio: null,
+        followers: 12500,
+        following: null,
+        engagementRate: 0.038,
+        qualityScore: 72,
+        email: null,
+        category: "Lifestyle",
+        isVerified: false,
+        profileUrl: "https://instagram.com/sample_creator",
+        profilePicture: null,
+        lastDmAt: null,
+      } as CreatorRow),
+    [creators]
+  );
+
+  const livePreview = useMemo(
+    () => renderTemplate(template, previewCreator),
+    [template, previewCreator]
+  );
+
+  // ---------- DM ----------
   async function copyToClipboard(text: string): Promise<boolean> {
     try {
       await navigator.clipboard.writeText(text);
@@ -401,7 +557,6 @@ export function InfluencerFind({
       "_blank",
       "noopener,noreferrer"
     );
-    // Optimistically mark as DM-sent.
     void recordIGDmSentAction(c.id);
     setCreators((rows) =>
       rows.map((r) => (r.id === c.id ? { ...r, lastDmAt: new Date() } : r))
@@ -434,6 +589,7 @@ export function InfluencerFind({
     step();
   }
 
+  // ---------- Export ----------
   function exportCSV() {
     const headers = [
       "Username",
@@ -454,7 +610,7 @@ export function InfluencerFind({
           csvEscape(c.fullName ?? ""),
           csvEscape(c.followers),
           csvEscape(c.engagementRate !== null ? fmtPct(c.engagementRate) : ""),
-          csvEscape(c.qualityScore ?? ""),
+          csvEscape(qualityLabelFromScore(c.qualityScore) ?? ""),
           csvEscape(c.email ?? ""),
           csvEscape(c.category ?? ""),
           csvEscape(c.bio ?? ""),
@@ -470,7 +626,6 @@ export function InfluencerFind({
   }
 
   function exportExcel() {
-    // Excel-compatible HTML table (.xls). Opens natively in Excel + Sheets.
     const head = `
       <tr>
         <th>Username</th><th>Full Name</th><th>Followers</th>
@@ -485,7 +640,7 @@ export function InfluencerFind({
           <td>${escapeHtml(c.fullName ?? "")}</td>
           <td>${c.followers}</td>
           <td>${c.engagementRate !== null ? fmtPct(c.engagementRate) : ""}</td>
-          <td>${c.qualityScore ?? ""}</td>
+          <td>${qualityLabelFromScore(c.qualityScore) ?? ""}</td>
           <td>${escapeHtml(c.email ?? "")}</td>
           <td>${escapeHtml(c.category ?? "")}</td>
           <td>${escapeHtml(c.bio ?? "")}</td>
@@ -514,111 +669,176 @@ export function InfluencerFind({
     await clearIGCreatorsAction();
   }
 
+  // ---------- Derived ----------
+  const runActive = !!run;
+  const progressPct = runActive
+    ? Math.min(95, 5 + Math.round((elapsedMs / MAX_RUN_MS) * 90))
+    : 0;
+  const hasResults = creators.length > 0;
+
+  // -----------------------------------------------------------------------
+  // Render
+  // -----------------------------------------------------------------------
   return (
     <div className="space-y-6">
-      {/* Hero */}
-      <div className="rounded-xl border bg-gradient-to-br from-pink-500/10 via-fuchsia-500/5 to-amber-500/10 p-6">
-        <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-fuchsia-700 dark:text-fuchsia-300">
-          <Sparkles className="h-4 w-4" />
+      {/* ============ Hero ============ */}
+      <div className="overflow-hidden rounded-2xl border bg-gradient-to-br from-fuchsia-500/15 via-purple-500/10 to-amber-500/10 p-6 md:p-8">
+        <div className="inline-flex items-center gap-2 rounded-full bg-fuchsia-500/15 px-3 py-1 text-xs font-medium text-fuchsia-700 dark:text-fuchsia-300">
+          <Sparkles className="h-3.5 w-3.5" />
           Instagram Influencer Discovery
         </div>
-        <h2 className="mt-2 text-2xl font-semibold tracking-tight md:text-3xl">
+        <h2 className="mt-3 text-2xl font-semibold tracking-tight md:text-4xl">
           Discover the perfect creators for your brand
         </h2>
-        <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+        <p className="mt-3 max-w-2xl text-sm text-muted-foreground md:text-base">
           Enter seed accounts from your niche. Our AI-powered scraper analyzes
           their network to find similar influencers with verified engagement
           metrics, then crafts your personalized cold DM.
         </p>
       </div>
 
-      {/* Search */}
+      {/* ============ Search ============ */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Search className="h-4 w-4" />
-            Search Influencers
-          </CardTitle>
-          <CardDescription>
-            Configure your search parameters below. We&apos;ll mine top
-            hashtags from each seed and fan out to find similar creators.
-          </CardDescription>
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-fuchsia-500 to-purple-600 text-white shadow-sm">
+              <Search className="h-5 w-5" />
+            </div>
+            <div>
+              <CardTitle className="text-lg">Search Influencers</CardTitle>
+              <CardDescription>
+                Configure your search parameters below
+              </CardDescription>
+            </div>
+          </div>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-5">
+          {/* Seed Accounts */}
           <div>
-            <Label htmlFor="seeds" className="text-xs">
-              Seed accounts (one per line, or comma-separated)
+            <Label htmlFor="seeds" className="text-sm font-medium">
+              Seed Accounts <span className="text-rose-500">*</span>
             </Label>
-            <Textarea
+            <Input
               id="seeds"
               value={seedsText}
               onChange={(e) => setSeedsText(e.target.value)}
-              placeholder="@huberman&#10;@andrewhuberman&#10;@hubermanlab"
-              className="mt-1 h-28 font-mono text-sm"
-              disabled={pending}
+              placeholder="e.g. nike, adidas, underarmour"
+              disabled={pending || runActive}
+              className="mt-1.5"
             />
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              Best results with 3–5 handles in the same niche, comma-separated,
+              no @. A single seed often returns nothing — we&apos;ll auto-fall
+              back to keyword discovery if it does.
+            </p>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-4">
+          {/* Profiles / Min / Max */}
+          <div className="grid gap-4 sm:grid-cols-3">
             <div>
-              <Label htmlFor="minF" className="text-xs">
-                Min followers
-              </Label>
-              <Input
-                id="minF"
-                inputMode="numeric"
-                value={minFollowers}
-                onChange={(e) => setMinFollowers(e.target.value.replace(/[^0-9]/g, ""))}
-                disabled={pending || runActive}
-                className="mt-1"
-              />
-            </div>
-            <div>
-              <Label htmlFor="maxF" className="text-xs">
-                Max followers (0 = no cap)
-              </Label>
-              <Input
-                id="maxF"
-                inputMode="numeric"
-                value={maxFollowers}
-                onChange={(e) => setMaxFollowers(e.target.value.replace(/[^0-9]/g, ""))}
-                disabled={pending || runActive}
-                className="mt-1"
-              />
-            </div>
-            <div>
-              <Label htmlFor="maxP" className="text-xs">
-                Max profiles ($0.01/each)
+              <Label htmlFor="maxP" className="text-sm font-medium">
+                Profiles to Find
               </Label>
               <Input
                 id="maxP"
                 inputMode="numeric"
                 value={maxProfiles}
-                onChange={(e) => setMaxProfiles(e.target.value.replace(/[^0-9]/g, ""))}
+                onChange={(e) =>
+                  setMaxProfiles(e.target.value.replace(/[^0-9]/g, ""))
+                }
+                placeholder="100"
                 disabled={pending || runActive}
-                className="mt-1"
+                className="mt-1.5"
               />
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                $0.01 per analyzed profile on Apify.
+              </p>
             </div>
             <div>
-              <Label htmlFor="cat" className="text-xs">
-                Category (optional)
+              <Label htmlFor="minF" className="text-sm font-medium">
+                Min Followers
               </Label>
               <Input
-                id="cat"
-                value={categoryHint}
-                onChange={(e) => setCategoryHint(e.target.value)}
-                placeholder="e.g. fitness, photographer"
+                id="minF"
+                inputMode="numeric"
+                value={minFollowers}
+                onChange={(e) =>
+                  setMinFollowers(e.target.value.replace(/[^0-9]/g, ""))
+                }
+                placeholder="e.g. 1000"
                 disabled={pending || runActive}
-                className="mt-1"
+                className="mt-1.5"
               />
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                Wide ranges work best (e.g. 1K–500K)
+              </p>
+            </div>
+            <div>
+              <Label htmlFor="maxF" className="text-sm font-medium">
+                Max Followers
+              </Label>
+              <Input
+                id="maxF"
+                inputMode="numeric"
+                value={maxFollowers}
+                onChange={(e) =>
+                  setMaxFollowers(e.target.value.replace(/[^0-9]/g, ""))
+                }
+                placeholder="e.g. 500000"
+                disabled={pending || runActive}
+                className="mt-1.5"
+              />
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                Tight windows often return 0 results
+              </p>
             </div>
           </div>
 
-          {runActive && (
-            <div className="rounded-md border bg-muted/30 p-3">
+          {/* Niche */}
+          <div>
+            <Label htmlFor="niche" className="text-sm font-medium">
+              Niche / Keywords
+            </Label>
+            <Input
+              id="niche"
+              value={niche}
+              onChange={(e) => setNiche(e.target.value)}
+              placeholder="e.g. fitness, fashion, tech reviews"
+              disabled={pending || runActive}
+              className="mt-1.5"
+            />
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              Describe the type of influencer you&apos;re looking for. Used as
+              keyword-discovery fallback when seeds don&apos;t yield results.
+            </p>
+          </div>
+
+          {/* Location */}
+          <div>
+            <Label htmlFor="loc" className="text-sm font-medium">
+              Location
+            </Label>
+            <select
+              id="loc"
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              disabled={pending || runActive}
+              className="mt-1.5 flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {LOCATIONS.map((l) => (
+                <option key={l.value} value={l.value}>
+                  {l.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* In-flight status */}
+          {runActive && run && (
+            <div className="rounded-md border border-fuchsia-500/30 bg-fuchsia-500/5 p-3">
               <div className="flex items-center justify-between gap-2">
                 <p className="text-sm font-medium">
-                  {prettyStatus(runStatus)}
+                  {prettyStatus(runStatus, run.mode)}
                   <span className="ml-2 font-mono text-xs text-muted-foreground">
                     {fmtElapsed(elapsedMs)}
                   </span>
@@ -635,97 +855,116 @@ export function InfluencerFind({
               </div>
               <Progress value={progressPct} className="mt-2 h-1.5" />
               <p className="mt-2 text-xs text-muted-foreground">
-                Apify network expansion for{" "}
-                {run?.seeds.map((s) => `@${s}`).join(", ")}. Usually 1–5
-                minutes; up to 15 min for large maxProfiles. You can leave
-                this tab open or come back later — the run survives a
-                refresh.
+                This may take 5–15 minutes depending on the number of profiles.
+                You can leave this tab open or come back later — the run
+                survives a refresh.
               </p>
             </div>
           )}
 
-          <div className="flex flex-wrap items-center gap-3">
-            <Button
-              onClick={onDiscover}
-              disabled={pending || runActive}
-              className="gap-2"
-            >
-              {pending || runActive ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Search className="h-4 w-4" />
-              )}
-              {runActive ? "Discovery running…" : "Find Creators"}
-            </Button>
-            {!hasApifyToken && (
-              <p className="text-xs text-amber-600 dark:text-amber-400">
-                Set <code>APIFY_TOKEN</code> in Render → Environment to enable.
-              </p>
+          {/* CTA */}
+          <Button
+            type="button"
+            onClick={onDiscover}
+            disabled={pending || runActive}
+            className={cn(
+              "h-11 w-full gap-2 bg-gradient-to-r from-fuchsia-500 to-purple-600 text-white shadow-md hover:from-fuchsia-600 hover:to-purple-700 hover:text-white",
+              "disabled:from-fuchsia-500/60 disabled:to-purple-600/60"
             )}
-          </div>
+          >
+            {pending || runActive ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Search className="h-4 w-4" />
+            )}
+            {runActive ? "Discovery running…" : "Find Influencers"}
+          </Button>
+
+          {!hasApifyToken && (
+            <p className="text-center text-xs text-amber-600 dark:text-amber-400">
+              Set <code>APIFY_TOKEN</code> (or <code>APIFY_IG_TOKEN</code>) in
+              Render → Environment to enable.
+            </p>
+          )}
         </CardContent>
       </Card>
 
-      {/* DM Template */}
+      {/* ============ DM Template ============ */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Send className="h-4 w-4" />
-            DM Outreach Template
-          </CardTitle>
-          <CardDescription>
-            Craft your message — it&apos;s copied to clipboard before each
-            DM window opens. Click a variable chip to insert it.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <Textarea
-            value={template}
-            onChange={(e) => setTemplate(e.target.value)}
-            className="min-h-[120px] text-sm"
-          />
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-muted-foreground">Insert:</span>
-            {TEMPLATE_VARS.map((v) => (
-              <button
-                key={v.key}
-                type="button"
-                onClick={() => insertVariable(v.label)}
-                className="rounded-full border bg-muted/60 px-2.5 py-0.5 text-xs font-mono text-foreground hover:bg-primary hover:text-primary-foreground transition"
-              >
-                {v.label}
-              </button>
-            ))}
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400 to-rose-500 text-white shadow-sm">
+              <Send className="h-5 w-5" />
+            </div>
+            <div>
+              <CardTitle className="text-lg">DM Outreach Template</CardTitle>
+              <CardDescription>
+                Craft your message — it&apos;s copied to clipboard before each
+                DM opens
+              </CardDescription>
+            </div>
           </div>
-          <div className="rounded-md border border-dashed bg-muted/30 p-3">
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="rounded-md border border-dashed bg-muted/30 p-2.5 text-xs text-muted-foreground">
+            When you click <span className="font-medium">Send DM</span>, your
+            message is copied to clipboard. Just paste (Ctrl+V / Cmd+V) in the
+            DM window and send.
+          </div>
+
+          <div>
+            <Label className="text-sm font-medium">Message Template</Label>
+            <Textarea
+              value={template}
+              onChange={(e) => setTemplate(e.target.value)}
+              className="mt-1.5 min-h-[140px] font-mono text-sm"
+            />
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="text-xs text-muted-foreground">Insert:</span>
+              {TEMPLATE_VARS.map((v) => (
+                <button
+                  key={v.key}
+                  type="button"
+                  onClick={() => insertVariable(v.label)}
+                  className="rounded-full border bg-muted/60 px-2.5 py-0.5 font-mono text-xs text-foreground transition hover:bg-primary hover:text-primary-foreground"
+                >
+                  + {v.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-md border bg-muted/30 p-3">
             <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              Live preview · @{previewCreator.handle}
+              Live Preview · @{previewCreator.handle}
             </p>
             <p className="whitespace-pre-wrap text-sm">{livePreview}</p>
           </div>
         </CardContent>
       </Card>
 
-      {/* Results */}
+      {/* ============ Results ============ */}
       <Card>
         <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3 space-y-0">
-          <div>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Users className="h-4 w-4" />
-              {creators.length} Profiles Found
-            </CardTitle>
-            <CardDescription>
-              Export your results or send DMs directly. Click any handle to
-              open the IG profile.
-            </CardDescription>
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400 to-teal-500 text-white shadow-sm">
+              <Users className="h-5 w-5" />
+            </div>
+            <div>
+              <CardTitle className="text-lg">
+                {creators.length} Profiles Found
+              </CardTitle>
+              <CardDescription>
+                Export your results or send DMs directly
+              </CardDescription>
+            </div>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button
               size="sm"
-              variant="default"
               onClick={onDMAll}
-              disabled={creators.length === 0}
-              className="gap-2"
+              disabled={!hasResults}
+              className="gap-2 bg-gradient-to-r from-fuchsia-500 to-purple-600 text-white hover:from-fuchsia-600 hover:to-purple-700 hover:text-white"
             >
               <Send className="h-3.5 w-3.5" />
               DM All ({creators.length})
@@ -734,7 +973,7 @@ export function InfluencerFind({
               size="sm"
               variant="outline"
               onClick={exportCSV}
-              disabled={creators.length === 0}
+              disabled={!hasResults}
               className="gap-2"
             >
               <FileText className="h-3.5 w-3.5" />
@@ -744,7 +983,7 @@ export function InfluencerFind({
               size="sm"
               variant="outline"
               onClick={exportExcel}
-              disabled={creators.length === 0}
+              disabled={!hasResults}
               className="gap-2"
             >
               <FileSpreadsheet className="h-3.5 w-3.5" />
@@ -754,7 +993,7 @@ export function InfluencerFind({
               size="sm"
               variant="ghost"
               onClick={onClearAll}
-              disabled={creators.length === 0}
+              disabled={!hasResults}
               className="gap-2 text-muted-foreground"
             >
               <Trash2 className="h-3.5 w-3.5" />
@@ -762,151 +1001,224 @@ export function InfluencerFind({
             </Button>
           </div>
         </CardHeader>
-        <CardContent className="overflow-x-auto p-0">
-          {creators.length === 0 ? (
-            <p className="rounded-md border border-dashed border-transparent py-12 text-center text-sm text-muted-foreground">
-              No creators yet. Enter seed accounts above and click{" "}
-              <span className="font-medium">Find Creators</span>.
-            </p>
+        <CardContent className="p-0">
+          {!hasResults ? (
+            <div className="px-6 py-16 text-center">
+              <Users className="mx-auto h-10 w-10 text-muted-foreground/40" />
+              <p className="mt-3 text-sm text-muted-foreground">
+                No creators yet. Enter seed accounts above and click{" "}
+                <span className="font-medium text-foreground">
+                  Find Influencers
+                </span>
+                .
+              </p>
+            </div>
           ) : (
-            <table className="w-full text-sm">
-              <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
-                <tr>
-                  <th className="px-3 py-2 text-left">#</th>
-                  <th className="px-3 py-2 text-left">Profile</th>
-                  <th className="px-3 py-2 text-left">Full Name</th>
-                  <th className="px-3 py-2 text-right">Followers</th>
-                  <th className="px-3 py-2 text-right">Engagement</th>
-                  <th className="px-3 py-2 text-right">Quality</th>
-                  <th className="px-3 py-2 text-left">Email</th>
-                  <th className="px-3 py-2 text-left">Category</th>
-                  <th className="px-3 py-2 text-left">Bio</th>
-                  <th className="px-3 py-2 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {creators.map((c, idx) => (
-                  <tr key={c.id} className="border-t hover:bg-muted/30">
-                    <td className="px-3 py-2 text-xs text-muted-foreground">
-                      {idx + 1}
-                    </td>
-                    <td className="px-3 py-2">
-                      <a
-                        href={c.profileUrl}
-                        target="_blank"
-                        rel="noreferrer noopener"
-                        className="inline-flex items-center gap-1 font-medium hover:text-primary"
-                      >
-                        <Instagram className="h-3.5 w-3.5" />
-                        @{c.handle}
-                        {c.isVerified && (
-                          <Badge variant="secondary" className="ml-1 h-4 text-[9px]">
-                            ✓
-                          </Badge>
-                        )}
-                      </a>
-                    </td>
-                    <td className="px-3 py-2">{c.fullName || "—"}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">
-                      {fmtNumber(c.followers)}
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums">
-                      {fmtPct(c.engagementRate)}
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <span
-                        className={`inline-block rounded px-2 py-0.5 text-xs font-medium tabular-nums ${qualityColor(c.qualityScore)}`}
-                      >
-                        {c.qualityScore ?? "—"}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2">
-                      {c.email ? (
-                        <a
-                          href={`mailto:${c.email}`}
-                          className="inline-flex items-center gap-1 text-xs hover:text-primary"
-                        >
-                          <Mail className="h-3 w-3" />
-                          {c.email}
-                        </a>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2">
-                      {c.category ? (
-                        <Badge variant="outline" className="text-[10px]">
-                          {c.category}
-                        </Badge>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td className="px-3 py-2">
-                      <p className="line-clamp-2 max-w-[220px] text-xs text-muted-foreground">
-                        {c.bio || "—"}
-                      </p>
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          size="sm"
-                          variant={c.lastDmAt ? "secondary" : "default"}
-                          onClick={() => onSendDM(c)}
-                          className="h-7 gap-1 px-2 text-xs"
-                          title={
-                            c.lastDmAt
-                              ? `Last DM ${new Date(c.lastDmAt).toLocaleDateString()}`
-                              : "Copy template + open IG"
-                          }
-                        >
-                          <Send className="h-3 w-3" />
-                          {c.lastDmAt ? "Re-DM" : "DM"}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          asChild
-                          className="h-7 px-2"
-                          title="Open profile"
-                        >
-                          <a
-                            href={c.profileUrl}
-                            target="_blank"
-                            rel="noreferrer noopener"
-                          >
-                            <ExternalLink className="h-3 w-3" />
-                          </a>
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => onDelete(c)}
-                          className="h-7 px-2 text-muted-foreground"
-                          title="Remove"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    </td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-2.5 text-left">#</th>
+                    <th className="px-3 py-2.5 text-left">Profile</th>
+                    <th className="px-3 py-2.5 text-right">Followers</th>
+                    <th className="px-3 py-2.5 text-right">Engagement</th>
+                    <th className="px-3 py-2.5 text-center">Quality</th>
+                    <th className="px-3 py-2.5 text-left">Email</th>
+                    <th className="px-3 py-2.5 text-left">Category</th>
+                    <th className="px-3 py-2.5 text-left">Bio</th>
+                    <th className="px-3 py-2.5 text-right">Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {creators.map((c, idx) => {
+                    const ql = qualityLabelFromScore(c.qualityScore);
+                    return (
+                      <tr
+                        key={c.id}
+                        className="border-t transition-colors hover:bg-muted/30"
+                      >
+                        <td className="px-3 py-3 text-xs text-muted-foreground tabular-nums">
+                          {idx + 1}
+                        </td>
+                        <td className="px-3 py-3">
+                          <div className="flex items-center gap-2.5">
+                            <CreatorAvatar
+                              src={c.profilePicture}
+                              fullName={c.fullName}
+                              handle={c.handle}
+                            />
+                            <div className="min-w-0">
+                              <a
+                                href={c.profileUrl}
+                                target="_blank"
+                                rel="noreferrer noopener"
+                                className="inline-flex items-center gap-1 font-medium hover:text-primary"
+                              >
+                                @{c.handle}
+                                {c.isVerified && (
+                                  <CheckCircle2 className="h-3.5 w-3.5 fill-blue-500 text-white" />
+                                )}
+                              </a>
+                              {c.fullName && (
+                                <p className="truncate text-xs text-muted-foreground">
+                                  {c.fullName}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 text-right tabular-nums">
+                          {fmtNumber(c.followers)}
+                        </td>
+                        <td className="px-3 py-3 text-right tabular-nums">
+                          {fmtPct(c.engagementRate)}
+                        </td>
+                        <td className="px-3 py-3 text-center">
+                          {ql ? (
+                            <span
+                              className={cn(
+                                "inline-block rounded px-2 py-0.5 text-[11px] font-medium",
+                                qualityClasses(c.qualityScore)
+                              )}
+                              title={
+                                c.qualityScore !== null
+                                  ? `Score: ${c.qualityScore}`
+                                  : undefined
+                              }
+                            >
+                              {ql}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-3">
+                          {c.email ? (
+                            <a
+                              href={`mailto:${c.email}`}
+                              className="inline-flex max-w-[180px] items-center gap-1 truncate text-xs hover:text-primary"
+                              title={c.email}
+                            >
+                              <Mail className="h-3 w-3 shrink-0" />
+                              <span className="truncate">{c.email}</span>
+                            </a>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-3">
+                          {c.category ? (
+                            <Badge
+                              variant="outline"
+                              className="whitespace-nowrap text-[10px]"
+                            >
+                              {c.category}
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-3">
+                          <p
+                            className="line-clamp-2 max-w-[260px] text-xs text-muted-foreground"
+                            title={c.bio ?? undefined}
+                          >
+                            {c.bio || "—"}
+                          </p>
+                        </td>
+                        <td className="px-3 py-3 text-right">
+                          <div className="flex justify-end gap-1">
+                            <Button
+                              size="sm"
+                              variant={c.lastDmAt ? "secondary" : "default"}
+                              onClick={() => onSendDM(c)}
+                              className={cn(
+                                "h-8 gap-1 px-2.5 text-xs",
+                                !c.lastDmAt &&
+                                  "bg-gradient-to-r from-fuchsia-500 to-purple-600 text-white hover:from-fuchsia-600 hover:to-purple-700 hover:text-white"
+                              )}
+                              title={
+                                c.lastDmAt
+                                  ? `Last DM ${new Date(c.lastDmAt).toLocaleDateString()}`
+                                  : "Copy template + open IG"
+                              }
+                            >
+                              <Send className="h-3 w-3" />
+                              {c.lastDmAt ? "Re-DM" : "Send DM"}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              asChild
+                              className="h-8 px-2"
+                              title="Open profile"
+                            >
+                              <a
+                                href={c.profileUrl}
+                                target="_blank"
+                                rel="noreferrer noopener"
+                              >
+                                <ExternalLink className="h-3.5 w-3.5" />
+                              </a>
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => onDelete(c)}
+                              className="h-8 px-2 text-muted-foreground"
+                              title="Remove"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
         </CardContent>
       </Card>
+
+      <p className="text-center text-xs text-muted-foreground">
+        <Instagram className="mr-1 inline h-3 w-3" />
+        Powered by Apify · Built for influencer discovery
+      </p>
     </div>
   );
 }
 
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+// ---------------------------------------------------------------------------
+// Avatar — round image with initials fallback
+// ---------------------------------------------------------------------------
+function CreatorAvatar({
+  src,
+  fullName,
+  handle,
+}: {
+  src: string | null;
+  fullName: string | null;
+  handle: string;
+}) {
+  const [errored, setErrored] = useState(false);
+  const useImage = src && !errored;
+  if (useImage) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={src}
+        alt={fullName || handle}
+        onError={() => setErrored(true)}
+        className="h-9 w-9 shrink-0 rounded-full border bg-muted object-cover"
+        referrerPolicy="no-referrer"
+      />
+    );
+  }
+  return (
+    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-fuchsia-500 to-purple-600 text-[11px] font-semibold text-white">
+      {initials(fullName, handle)}
+    </div>
+  );
 }
-
-// Keep Download icon import alive for tree-shaking detection.
-void Download;

@@ -61,6 +61,19 @@ export type IGNetworkRunInput = {
   extractEmail?: boolean;
   /** When true (default), adds Median ER + Quality + Avg Likes/Comments columns. */
   analyzeQuality?: boolean;
+  /** Maps to actor `profileLanguage` filter (e.g. "English"). */
+  language?: string;
+};
+
+export type IGKeywordRunInput = {
+  /** Free-text niche keywords — e.g. "fitness coach, personal trainer". */
+  keywords: string[];
+  minFollowers?: number;
+  maxFollowers?: number;
+  maxProfiles?: number;
+  extractEmail?: boolean;
+  analyzeQuality?: boolean;
+  language?: string;
 };
 
 export type IGNetworkRunHandle = {
@@ -139,6 +152,9 @@ export async function startIGNetworkRun(
   if (input.maxFollowers && input.maxFollowers > 0) {
     body.maxFollowers = Number(input.maxFollowers);
   }
+  if (input.language) {
+    body.profileLanguage = input.language;
+  }
 
   const url =
     `https://api.apify.com/v2/acts/${encodeURIComponent(actor)}/runs` +
@@ -182,6 +198,106 @@ export async function startIGNetworkRun(
     );
   }
 
+  return {
+    runId: json.data.id,
+    datasetId: json.data.defaultDatasetId,
+    status: json.data.status ?? "READY",
+    actor,
+  };
+}
+
+// --------------------------------------------------------------------------
+// 1b. Keyword-discovery fallback (Mode 4)
+// --------------------------------------------------------------------------
+//
+// Used when Mode 3 (networkExpansion) returns 0 profiles. The QuickAds team
+// learned that very-narrow seed graphs (single seed, niche too small, or
+// celebrity accounts whose graph doesn't surface micro-influencers) can
+// produce empty Mode-3 datasets — Mode 4 rescues those queries by searching
+// hashtags + free-text queries instead.
+function toHashtag(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 30);
+}
+
+export async function startIGKeywordDiscoveryRun(
+  input: IGKeywordRunInput
+): Promise<IGNetworkRunHandle> {
+  const token = apifyToken();
+  const actor = env.APIFY_IG_NETWORK_ACTOR_ID;
+
+  const keywords = input.keywords
+    .map((s) => String(s ?? "").trim())
+    .filter((s) => s.length >= 2)
+    .slice(0, 8);
+  if (keywords.length === 0) {
+    throw new ApifyIGNetworkError(
+      "At least one niche keyword is required for keyword discovery."
+    );
+  }
+  const hashtags = keywords
+    .map(toHashtag)
+    .filter((t) => t.length >= 3)
+    .slice(0, 5);
+
+  const body: Record<string, unknown> = {
+    operationMode: "keywordDiscovery",
+    searchQueries: keywords.slice(0, 5),
+    searchHashtags: hashtags,
+    maxSearchPagesPerQuery: 5,
+    maxCountDiscovery: Math.max(50, Math.min(input.maxProfiles ?? 100, 500)),
+    maxCount: Math.max(50, Math.min(input.maxProfiles ?? 100, 500)),
+    extractEmail: input.extractEmail ?? true,
+    analyzeQuality: input.analyzeQuality ?? true,
+    filterCombination: "OR",
+  };
+  if (input.minFollowers && input.minFollowers > 0) {
+    body.minFollowers = Number(input.minFollowers);
+  }
+  if (input.maxFollowers && input.maxFollowers > 0) {
+    body.maxFollowers = Number(input.maxFollowers);
+  }
+  if (input.language) {
+    body.profileLanguage = input.language;
+  }
+
+  const url =
+    `https://api.apify.com/v2/acts/${encodeURIComponent(actor)}/runs` +
+    `?token=${encodeURIComponent(token)}`;
+
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), RUN_START_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+  } finally {
+    clearTimeout(t);
+  }
+  if (!res.ok) {
+    let detail = "";
+    try {
+      detail = await res.text();
+    } catch {
+      /* ignore */
+    }
+    throw new ApifyIGNetworkError(
+      `Apify keyword-discovery run failed (${res.status})` +
+        (detail ? `: ${detail.slice(0, 300)}` : ""),
+      res.status
+    );
+  }
+  const json = (await res.json()) as {
+    data?: { id?: string; defaultDatasetId?: string; status?: string };
+  };
+  if (!json.data?.id || !json.data?.defaultDatasetId) {
+    throw new ApifyIGNetworkError(
+      `Apify keyword-discovery response missing ids`
+    );
+  }
   return {
     runId: json.data.id,
     datasetId: json.data.defaultDatasetId,

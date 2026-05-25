@@ -147,6 +147,7 @@ export default async function InstagramAgentPage() {
     category: c.category,
     isVerified: c.isVerified,
     profileUrl: c.profileUrl,
+    profilePicture: c.profilePicture,
     lastDmAt: c.lastDmAt,
   }));
 
