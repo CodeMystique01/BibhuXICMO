@@ -69,11 +69,11 @@ export default async function YouTubeAgentPage() {
     lastContactAt: r.lastContactAt,
   }));
 
-  const hasApifyToken = Boolean(env.APIFY_YT_TOKEN || env.APIFY_TOKEN);
+  const hasApiKey = Boolean(env.YOUTUBE_API_KEY);
 
   return (
     <div className="container mx-auto max-w-6xl py-6">
-      <CreatorSearch initialCreators={creators} hasApifyToken={hasApifyToken} />
+      <CreatorSearch initialCreators={creators} hasApiKey={hasApiKey} />
     </div>
   );
 }

@@ -50,3 +50,6 @@ prisma/migrations/dev.db*
 # Uploads
 /uploads
 /tmp
+
+# Local-only commit message scratchpad
+.commit-msg.txt
