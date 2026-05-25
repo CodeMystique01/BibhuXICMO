@@ -123,15 +123,12 @@ services:
       - key: APIFY_IG_NETWORK_ACTOR_ID
         value: afanasenko~instagram-profile-scraper
 
-      # ----- Apify YouTube creator discovery -----
-      # Optional dedicated token (falls back to APIFY_TOKEN).
-      - key: APIFY_YT_TOKEN
+      # ----- YouTube creator discovery (Google YT Data API v3) -----
+      # Get a key at https://console.cloud.google.com/apis/credentials
+      # after enabling the "YouTube Data API v3" service. 10 000-unit
+      # free tier ≈ 99 keyword searches/day with channel enrichment.
+      - key: YOUTUBE_API_KEY
         sync: false
-      # Default actor: search videos by keywords, returns video + channel
-      # metadata which we group by channel for the YT creator discovery
-      # page. Override to swap actors (e.g. `apify~youtube-scraper`).
-      - key: APIFY_YT_ACTOR_ID
-        value: streamers~youtube-scraper
 
       # ----- Google PageSpeed (free site-audit Lighthouse scores) -----
       - key: PAGESPEED_API_KEY

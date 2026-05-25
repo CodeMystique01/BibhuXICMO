@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import {
   CheckCircle2,
   ExternalLink,
@@ -14,7 +14,6 @@ import {
   Trash2,
   Users,
   Video,
-  X,
   Youtube,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -29,11 +28,9 @@ import {
 import { Input } from "@/frontend/components/ui/input";
 import { Label } from "@/frontend/components/ui/label";
 import { Badge } from "@/frontend/components/ui/badge";
-import { Progress } from "@/frontend/components/ui/progress";
 import { cn } from "@/shared/utils";
 import {
-  startYTDiscoveryAction,
-  pollYTDiscoveryAction,
+  searchYTCreatorsAction,
   recordYTContactAction,
   deleteYTCreatorAction,
   clearYTCreatorsAction,
@@ -51,7 +48,7 @@ export type YTCreatorView = {
   description: string | null;
   subscribers: number;
   videoCount: number | null;
-  viewCount: string | null; // bigint serialised to string
+  viewCount: string | null;
   country: string | null;
   language: string | null;
   category: string | null;
@@ -65,28 +62,10 @@ export type YTCreatorView = {
   lastContactAt: Date | null;
 };
 
-type RunInfo = {
-  runId: string;
-  datasetId: string;
-  startedAt: number;
-  keywords: string;
-  country: string;
-  language: string;
-  minSubscribers: number;
-  maxSubscribers: number;
-  maxChannels: number;
-  creatorsOnly: boolean;
-};
-
 // ---------------------------------------------------------------------------
-// Constants
+// Constants — multi-region list mirrors QuickAds (25 countries).
 // ---------------------------------------------------------------------------
 
-const POLL_INTERVAL_MS = 4_000;
-const MAX_RUN_MS = 15 * 60 * 1000;
-const RUN_STORAGE_KEY = "yt-discovery-run";
-
-// QuickAds-parity multi-region list (25 countries).
 const COUNTRIES: Array<{ value: string; label: string }> = [
   { value: "ANY", label: "Any Country" },
   { value: "US", label: "United States" },
@@ -161,24 +140,6 @@ function fmtBigInt(s: string | null | undefined): string {
   return fmtNumber(n);
 }
 
-function fmtElapsed(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  const m = Math.floor(s / 60);
-  const r = s % 60;
-  return `${m}:${r.toString().padStart(2, "0")}`;
-}
-
-function prettyStatus(s: string | null): string {
-  if (!s) return "Starting…";
-  if (s === "READY") return "Queued on Apify";
-  if (s === "RUNNING") return "Scraping YouTube";
-  if (s === "SUCCEEDED") return "Finishing up";
-  if (s === "FAILED") return "Failed";
-  if (s === "ABORTED") return "Aborted";
-  if (s === "TIMED-OUT") return "Timed out";
-  return s;
-}
-
 function qualityClasses(score: number | null): string {
   if (score === null) return "bg-muted text-muted-foreground";
   if (score >= 80)
@@ -232,12 +193,11 @@ function initials(name: string): string {
 
 export function CreatorSearch({
   initialCreators,
-  hasApifyToken,
+  hasApiKey,
 }: {
   initialCreators: YTCreatorView[];
-  hasApifyToken: boolean;
+  hasApiKey: boolean;
 }) {
-  // -------------------- Form state --------------------
   const [keywords, setKeywords] = useState("");
   const [country, setCountry] = useState<string>("ANY");
   const [language, setLanguage] = useState<string>("ANY");
@@ -245,143 +205,15 @@ export function CreatorSearch({
   const [maxChannels, setMaxChannels] = useState("50");
   const [creatorsOnly, setCreatorsOnly] = useState(true);
 
-  // -------------------- Run state --------------------
   const [creators, setCreators] = useState<YTCreatorView[]>(initialCreators);
   const [pending, startTransition] = useTransition();
-  const [run, setRun] = useState<RunInfo | null>(null);
-  const [runStatus, setRunStatus] = useState<string | null>(null);
-  const [elapsedMs, setElapsedMs] = useState(0);
 
-  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const tickTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // ---------- Run persistence ----------
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const raw = window.localStorage.getItem(RUN_STORAGE_KEY);
-      if (!raw) return;
-      const r = JSON.parse(raw) as RunInfo;
-      if (
-        r &&
-        typeof r.runId === "string" &&
-        typeof r.datasetId === "string" &&
-        Date.now() - r.startedAt < MAX_RUN_MS
-      ) {
-        setRun(r);
-        setRunStatus("RUNNING");
-        kickoffPolling(r);
-      } else {
-        window.localStorage.removeItem(RUN_STORAGE_KEY);
-      }
-    } catch {
-      /* ignore */
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    if (!run) {
-      if (tickTimerRef.current) clearInterval(tickTimerRef.current);
-      tickTimerRef.current = null;
-      return;
-    }
-    setElapsedMs(Date.now() - run.startedAt);
-    tickTimerRef.current = setInterval(() => {
-      setElapsedMs(Date.now() - run.startedAt);
-    }, 1000);
-    return () => {
-      if (tickTimerRef.current) clearInterval(tickTimerRef.current);
-      tickTimerRef.current = null;
-    };
-  }, [run]);
-
-  useEffect(() => {
-    return () => {
-      if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
-      if (tickTimerRef.current) clearInterval(tickTimerRef.current);
-    };
-  }, []);
-
-  function persistRun(r: RunInfo | null) {
-    if (typeof window === "undefined") return;
-    if (r) window.localStorage.setItem(RUN_STORAGE_KEY, JSON.stringify(r));
-    else window.localStorage.removeItem(RUN_STORAGE_KEY);
-  }
-
-  function clearRunState() {
-    if (pollTimerRef.current) {
-      clearTimeout(pollTimerRef.current);
-      pollTimerRef.current = null;
-    }
-    setRun(null);
-    setRunStatus(null);
-    setElapsedMs(0);
-    persistRun(null);
-  }
-
-  function kickoffPolling(r: RunInfo) {
-    if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
-    const tick = async () => {
-      try {
-        const res = await pollYTDiscoveryAction({
-          runId: r.runId,
-          datasetId: r.datasetId,
-          minSubscribers: r.minSubscribers,
-          maxSubscribers: r.maxSubscribers,
-          maxChannels: r.maxChannels,
-          creatorsOnly: r.creatorsOnly,
-        });
-        if (!res.ok) {
-          toast.error("Discovery failed", {
-            description: res.error,
-            duration: 8000,
-          });
-          clearRunState();
-          return;
-        }
-        setRunStatus(res.status);
-        if (!res.finished) {
-          if (Date.now() - r.startedAt > MAX_RUN_MS) {
-            toast.error("Discovery timed out", {
-              description:
-                "The Apify run is taking longer than 15 minutes — try narrower keywords or a smaller channel cap.",
-            });
-            clearRunState();
-            return;
-          }
-          pollTimerRef.current = setTimeout(tick, POLL_INTERVAL_MS);
-          return;
-        }
-        // Finished.
-        toast.success("Discovery complete", {
-          description: `Found ${res.found} channel${res.found === 1 ? "" : "s"}, saved ${res.saved}${
-            res.filteredOut > 0 ? ` (${res.filteredOut} filtered out)` : ""
-          }.`,
-          duration: 6000,
-        });
-        clearRunState();
-        // Refresh the table — server-rendered data is the source of truth.
-        // We can't fetch via server action, so just reload.
-        if (typeof window !== "undefined") {
-          window.location.reload();
-        }
-      } catch (err) {
-        toast.error("Polling failed", {
-          description: err instanceof Error ? err.message : "Unknown error",
-        });
-        clearRunState();
-      }
-    };
-    pollTimerRef.current = setTimeout(tick, POLL_INTERVAL_MS);
-  }
-
-  function handleStart() {
-    if (!hasApifyToken) {
-      toast.error("Apify token not configured", {
+  function handleSearch() {
+    if (!hasApiKey) {
+      toast.error("YouTube API key not configured", {
         description:
-          "Add APIFY_TOKEN (or APIFY_YT_TOKEN) to Render → Environment to enable YouTube creator discovery.",
-        duration: 8000,
+          "Add YOUTUBE_API_KEY to Render → Environment. Get a key at console.cloud.google.com/apis/credentials after enabling 'YouTube Data API v3'.",
+        duration: 9000,
       });
       return;
     }
@@ -396,7 +228,7 @@ export function CreatorSearch({
     const cap = Math.max(10, Math.min(parseInt(maxChannels, 10) || 50, 200));
 
     startTransition(async () => {
-      const res = await startYTDiscoveryAction({
+      const res = await searchYTCreatorsAction({
         keywords: trimmed,
         country: country === "ANY" ? undefined : country,
         language: language === "ANY" ? undefined : language,
@@ -406,40 +238,19 @@ export function CreatorSearch({
         creatorsOnly,
       });
       if (!res.ok) {
-        toast.error("Could not start discovery", {
+        toast.error("Search failed", {
           description: res.error,
-          duration: 8000,
+          duration: 9000,
         });
         return;
       }
-      const r: RunInfo = {
-        runId: res.runId,
-        datasetId: res.datasetId,
-        startedAt: Date.now(),
-        keywords: trimmed,
-        country,
-        language,
-        minSubscribers: band.min,
-        maxSubscribers: band.max,
-        maxChannels: cap,
-        creatorsOnly,
-      };
-      setRun(r);
-      setRunStatus(res.status);
-      persistRun(r);
-      kickoffPolling(r);
-      toast.message("Searching YouTube", {
-        description:
-          "Apify is scraping channels. This usually takes 1–3 minutes. You can leave this page open.",
+      setCreators(res.creators);
+      toast.success("Search complete", {
+        description: `Found ${res.found} channel${res.found === 1 ? "" : "s"}, kept ${res.saved}${
+          res.filteredOut > 0 ? ` (${res.filteredOut} filtered out as brands)` : ""
+        }.`,
+        duration: 6000,
       });
-    });
-  }
-
-  function handleAbort() {
-    clearRunState();
-    toast.message("Cancelled polling", {
-      description:
-        "The Apify run is still finishing on their side, but you won't get a notification when it does.",
     });
   }
 
@@ -487,7 +298,10 @@ export function CreatorSearch({
         ].join(",")
       );
     }
-    downloadBlob(new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" }), `yt-creators-${Date.now()}.csv`);
+    downloadBlob(
+      new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" }),
+      `yt-creators-${Date.now()}.csv`
+    );
   }
 
   function handleOpenChannel(c: YTCreatorView) {
@@ -521,7 +335,9 @@ export function CreatorSearch({
   function handleClear() {
     if (creators.length === 0) return;
     if (typeof window !== "undefined") {
-      const ok = window.confirm(`Delete all ${creators.length} discovered channels? This can't be undone.`);
+      const ok = window.confirm(
+        `Delete all ${creators.length} discovered channels? This can't be undone.`
+      );
       if (!ok) return;
     }
     startTransition(async () => {
@@ -531,16 +347,11 @@ export function CreatorSearch({
     });
   }
 
-  // ---------------------------------------------------------------------------
-  // Render
-  // ---------------------------------------------------------------------------
-
-  const isRunning = !!run;
   const stats = {
     total: creators.length,
     creators: creators.filter((c) => c.isCreator).length,
-    verified: creators.filter((c) => c.isVerified).length,
     withEmail: creators.filter((c) => c.email).length,
+    countries: new Set(creators.map((c) => c.country).filter(Boolean)).size,
   };
 
   return (
@@ -584,8 +395,8 @@ export function CreatorSearch({
             value={`${stats.creators} / ${stats.total}`}
             icon={ShieldCheck}
           />
-          <StatCard label="Verified" value={stats.verified.toString()} icon={CheckCircle2} />
           <StatCard label="With email" value={stats.withEmail.toString()} icon={Mail} />
+          <StatCard label="Countries" value={stats.countries.toString()} icon={Users} />
         </div>
       )}
 
@@ -598,14 +409,13 @@ export function CreatorSearch({
                 <Search className="h-5 w-5" /> Search Creators
               </CardTitle>
               <CardDescription>
-                Powered by Apify. Each search analyses up to{" "}
-                <strong>{maxChannels || 50}</strong> channels and finishes in 1–3
-                minutes.
+                Powered by YouTube Data API v3. Each keyword costs ~100 of your
+                10 000-unit daily quota.
               </CardDescription>
             </div>
-            {!hasApifyToken && (
+            {!hasApiKey && (
               <Badge variant="destructive" className="gap-1">
-                <ShieldAlert className="h-3 w-3" /> Apify token missing
+                <ShieldAlert className="h-3 w-3" /> API key missing
               </Badge>
             )}
           </div>
@@ -619,7 +429,10 @@ export function CreatorSearch({
               onChange={(e) => setKeywords(e.target.value)}
               placeholder="fitness coach, home workout, calisthenics tutorial"
               className="mt-1.5"
-              disabled={isRunning}
+              disabled={pending}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !pending) handleSearch();
+              }}
             />
             <p className="mt-1 text-xs text-muted-foreground">
               Comma-separated. Up to 8 keywords per search.
@@ -633,7 +446,7 @@ export function CreatorSearch({
                 id="country"
                 value={country}
                 onChange={(e) => setCountry(e.target.value)}
-                disabled={isRunning}
+                disabled={pending}
                 className="mt-1.5 flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {COUNTRIES.map((c) => (
@@ -649,7 +462,7 @@ export function CreatorSearch({
                 id="lang"
                 value={language}
                 onChange={(e) => setLanguage(e.target.value)}
-                disabled={isRunning}
+                disabled={pending}
                 className="mt-1.5 flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {LANGUAGES.map((l) => (
@@ -665,7 +478,7 @@ export function CreatorSearch({
                 id="band"
                 value={bandIdx}
                 onChange={(e) => setBandIdx(parseInt(e.target.value, 10))}
-                disabled={isRunning}
+                disabled={pending}
                 className="mt-1.5 flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {SUBSCRIBER_BANDS.map((b, i) => (
@@ -689,7 +502,7 @@ export function CreatorSearch({
                 max={200}
                 step={10}
                 className="mt-1.5"
-                disabled={isRunning}
+                disabled={pending}
               />
             </div>
             <div className="flex items-end">
@@ -698,7 +511,7 @@ export function CreatorSearch({
                   type="checkbox"
                   checked={creatorsOnly}
                   onChange={(e) => setCreatorsOnly(e.target.checked)}
-                  disabled={isRunning}
+                  disabled={pending}
                   className="h-4 w-4 rounded border-input"
                 />
                 <span>
@@ -712,47 +525,29 @@ export function CreatorSearch({
           </div>
 
           <div className="flex flex-wrap items-center gap-3 pt-2">
-            <Button onClick={handleStart} disabled={isRunning || pending} className="gap-2">
-              {pending && !isRunning ? (
+            <Button onClick={handleSearch} disabled={pending} className="gap-2">
+              {pending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Sparkles className="h-4 w-4" />
               )}
-              {isRunning ? "Searching…" : pending ? "Starting…" : "Find Creators"}
+              {pending ? "Searching YouTube…" : "Find Creators"}
             </Button>
-            {isRunning && (
-              <Button variant="ghost" onClick={handleAbort} className="gap-2">
-                <X className="h-4 w-4" /> Cancel
-              </Button>
-            )}
             {creators.length > 0 && (
               <>
                 <Button variant="outline" onClick={exportCsv} className="gap-2">
                   <FileSpreadsheet className="h-4 w-4" /> Export CSV
                 </Button>
-                <Button variant="ghost" onClick={handleClear} className="gap-2 text-rose-600 hover:text-rose-700">
+                <Button
+                  variant="ghost"
+                  onClick={handleClear}
+                  className="gap-2 text-rose-600 hover:text-rose-700"
+                >
                   <Trash2 className="h-4 w-4" /> Clear all
                 </Button>
               </>
             )}
           </div>
-
-          {isRunning && (
-            <div className="rounded-lg border bg-muted/30 p-3">
-              <div className="flex items-center justify-between text-sm">
-                <span className="flex items-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin text-red-600" />
-                  <span className="font-medium">{prettyStatus(runStatus)}</span>
-                </span>
-                <span className="text-muted-foreground">{fmtElapsed(elapsedMs)}</span>
-              </div>
-              <Progress value={Math.min(90, (elapsedMs / (5 * 60 * 1000)) * 100)} className="mt-2 h-1.5" />
-              <p className="mt-2 text-xs text-muted-foreground">
-                Apify is scraping YouTube. Don&apos;t worry if this looks slow —
-                results appear as soon as the run finishes.
-              </p>
-            </div>
-          )}
         </CardContent>
       </Card>
 
@@ -772,8 +567,8 @@ export function CreatorSearch({
               <Youtube className="h-10 w-10 text-muted-foreground/50" />
               <p className="mt-3 text-sm font-medium">No channels yet</p>
               <p className="mt-1 max-w-xs text-xs text-muted-foreground">
-                Enter a keyword above and click <strong>Find Creators</strong>. We&apos;ll
-                grab up to {maxChannels || 50} channels matching your filters.
+                Enter a keyword above and click <strong>Find Creators</strong>.
+                We&apos;ll grab up to {maxChannels || 50} channels matching your filters.
               </p>
             </div>
           ) : (
@@ -873,7 +668,9 @@ export function CreatorSearch({
                             qualityClasses(c.qualityScore)
                           )}
                           title={
-                            c.qualityScore !== null ? `Score ${c.qualityScore}/100` : undefined
+                            c.qualityScore !== null
+                              ? `Score ${c.qualityScore}/100`
+                              : undefined
                           }
                         >
                           {qualityLabel(c.qualityScore)}
@@ -881,14 +678,19 @@ export function CreatorSearch({
                       </td>
                       <td className="py-3 pr-3">
                         {c.isCreator ? (
-                          <Badge variant="outline" className="border-emerald-500/30 text-emerald-700 dark:text-emerald-300">
+                          <Badge
+                            variant="outline"
+                            className="border-emerald-500/30 text-emerald-700 dark:text-emerald-300"
+                          >
                             Creator
                           </Badge>
                         ) : (
                           <Badge
                             variant="outline"
                             className="border-amber-500/30 text-amber-700 dark:text-amber-300"
-                            title={c.detectionNote ?? "Likely a brand or corporate channel"}
+                            title={
+                              c.detectionNote ?? "Likely a brand or corporate channel"
+                            }
                           >
                             Brand
                           </Badge>

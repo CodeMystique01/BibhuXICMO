@@ -4,18 +4,15 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/backend/db";
 import { requireWorkspace } from "@/backend/workspace";
 import {
-  startYTRun,
-  getYTRunStatus,
-  fetchYTDataset,
-  isTerminalYTStatus,
-  ApifyYTError,
-  ApifyYTNotConfiguredError,
+  searchYTCreatorsBoth,
+  YTApiError,
+  YTApiNotConfiguredError,
   type YTDiscoveryInput,
   type YTCreatorRow,
-} from "@/integrations/youtube-apify";
+} from "@/integrations/youtube-data-api";
 
-type StartInput = {
-  /** Free-text — comma / newline separated. */
+type SearchInput = {
+  /** Comma / newline separated keywords. */
   keywords: string;
   country?: string;
   language?: string;
@@ -25,13 +22,36 @@ type StartInput = {
   creatorsOnly?: boolean;
 };
 
-export type StartYTDiscoveryResult =
+type SavedCreator = {
+  id: string;
+  channelId: string;
+  handle: string | null;
+  title: string;
+  description: string | null;
+  subscribers: number;
+  videoCount: number | null;
+  /** bigint → string for safe serialisation. */
+  viewCount: string | null;
+  country: string | null;
+  language: string | null;
+  category: string | null;
+  email: string | null;
+  thumbnailUrl: string | null;
+  channelUrl: string;
+  isVerified: boolean;
+  isCreator: boolean;
+  qualityScore: number | null;
+  detectionNote: string | null;
+  lastContactAt: Date | null;
+};
+
+export type SearchYTResult =
   | {
       ok: true;
-      runId: string;
-      datasetId: string;
-      status: string;
-      actor: string;
+      found: number;
+      saved: number;
+      filteredOut: number;
+      creators: SavedCreator[];
     }
   | { ok: false; error: string };
 
@@ -44,20 +64,22 @@ function parseKeywords(input: string): string[] {
 }
 
 /**
- * Kicks off an Apify YouTube discovery run. Returns immediately with
- * `runId` + `datasetId`; the client polls `pollYTDiscoveryAction` every
- * few seconds. A typical run with 50 channels takes 1–3 minutes — well
- * past Render's ~100s proxy timeout, so we never wait synchronously.
+ * Synchronous YouTube creator search via Google's YT Data API v3.
+ * Search + channel-enrichment normally takes 1-3 s so we run it inline
+ * — no polling needed (unlike the IG flow). Persists results into the
+ * `YTCreator` table and returns the saved rows for the UI to render
+ * immediately.
  */
-export async function startYTDiscoveryAction(
-  input: StartInput
-): Promise<StartYTDiscoveryResult> {
-  await requireWorkspace();
+export async function searchYTCreatorsAction(
+  input: SearchInput
+): Promise<SearchYTResult> {
+  const { workspace } = await requireWorkspace();
   const keywords = parseKeywords(input.keywords ?? "");
   if (keywords.length === 0) {
     return { ok: false, error: "Enter at least one search keyword." };
   }
-  const runInput: YTDiscoveryInput = {
+
+  const apiInput: YTDiscoveryInput = {
     keywords,
     country: input.country && input.country !== "ANY" ? input.country : undefined,
     language: input.language && input.language !== "ANY" ? input.language : undefined,
@@ -66,109 +88,34 @@ export async function startYTDiscoveryAction(
     maxChannels: input.maxChannels ?? 50,
     creatorsOnly: input.creatorsOnly ?? true,
   };
-  try {
-    const handle = await startYTRun(runInput);
-    return {
-      ok: true,
-      runId: handle.runId,
-      datasetId: handle.datasetId,
-      status: handle.status,
-      actor: handle.actor,
-    };
-  } catch (err) {
-    if (err instanceof ApifyYTNotConfiguredError) {
-      return {
-        ok: false,
-        error:
-          "Set APIFY_TOKEN (or APIFY_YT_TOKEN) in Render → Environment to enable YouTube discovery.",
-      };
-    }
-    return {
-      ok: false,
-      error: err instanceof Error ? err.message : "Failed to start YouTube discovery.",
-    };
-  }
-}
-
-export type PollYTDiscoveryResult =
-  | { ok: true; status: string; statusMessage?: string; finished: false }
-  | {
-      ok: true;
-      status: "SUCCEEDED";
-      statusMessage?: string;
-      finished: true;
-      found: number;
-      saved: number;
-      filteredOut: number;
-    }
-  | { ok: false; status: string; error: string };
-
-export async function pollYTDiscoveryAction(args: {
-  runId: string;
-  datasetId: string;
-  minSubscribers?: number;
-  maxSubscribers?: number;
-  maxChannels?: number;
-  creatorsOnly?: boolean;
-}): Promise<PollYTDiscoveryResult> {
-  const { workspace } = await requireWorkspace();
-  let status;
-  try {
-    status = await getYTRunStatus(args.runId);
-  } catch (err) {
-    return {
-      ok: false,
-      status: "UNKNOWN",
-      error: err instanceof Error ? err.message : "Could not reach Apify.",
-    };
-  }
-
-  if (!isTerminalYTStatus(status.status)) {
-    return {
-      ok: true,
-      status: status.status,
-      statusMessage: status.statusMessage,
-      finished: false,
-    };
-  }
-  if (status.status !== "SUCCEEDED") {
-    return {
-      ok: false,
-      status: status.status,
-      error:
-        status.statusMessage ??
-        `YouTube discovery ${status.status.toLowerCase()} on Apify.`,
-    };
-  }
 
   let rowsAll: YTCreatorRow[];
   let rowsFiltered: YTCreatorRow[];
   try {
-    // Fetch twice (cheap — same dataset, no extra Apify cost): once with
-    // filters applied to know what to save, once unfiltered for the
-    // `found` total + `filteredOut` count.
-    rowsAll = await fetchYTDataset(status.datasetId ?? args.datasetId, {
-      creatorsOnly: false,
-      maxChannels: 200,
-    });
-    rowsFiltered = await fetchYTDataset(status.datasetId ?? args.datasetId, {
-      minSubscribers: args.minSubscribers,
-      maxSubscribers: args.maxSubscribers,
-      maxChannels: args.maxChannels,
-      creatorsOnly: args.creatorsOnly ?? true,
-    });
+    const both = await searchYTCreatorsBoth(apiInput);
+    rowsAll = both.all;
+    rowsFiltered = both.filtered;
   } catch (err) {
+    if (err instanceof YTApiNotConfiguredError) {
+      return {
+        ok: false,
+        error:
+          "Set YOUTUBE_API_KEY in Render → Environment to enable YouTube creator search. Get a key at https://console.cloud.google.com/apis/credentials after enabling 'YouTube Data API v3'.",
+      };
+    }
+    if (err instanceof YTApiError) {
+      return { ok: false, error: err.message };
+    }
     return {
       ok: false,
-      status: "SUCCEEDED",
-      error: err instanceof Error ? err.message : "Failed to fetch YouTube results.",
+      error: err instanceof Error ? err.message : "YouTube search failed.",
     };
   }
 
-  let saved = 0;
+  const saved: SavedCreator[] = [];
   for (const r of rowsFiltered) {
     try {
-      await prisma.yTCreator.upsert({
+      const row = await prisma.yTCreator.upsert({
         where: {
           workspaceId_channelId: {
             workspaceId: workspace.id,
@@ -220,13 +167,57 @@ export async function pollYTDiscoveryAction(args: {
           fit: r.qualityScore / 100,
         },
       });
-      saved++;
+      saved.push({
+        id: row.id,
+        channelId: row.channelId,
+        handle: row.handle,
+        title: row.title,
+        description: row.description,
+        subscribers: row.subscribers,
+        videoCount: row.videoCount,
+        viewCount: row.viewCount !== null ? row.viewCount.toString() : null,
+        country: row.country,
+        language: row.language,
+        category: row.category,
+        email: row.email,
+        thumbnailUrl: row.thumbnailUrl,
+        channelUrl: row.channelUrl,
+        isVerified: row.isVerified,
+        isCreator: row.isCreator,
+        qualityScore: row.qualityScore,
+        detectionNote: row.detectionNote,
+        lastContactAt: row.lastContactAt,
+      });
     } catch (err) {
       const code = (err as { code?: string })?.code;
-      // P2021 = table doesn't exist yet (migration not run). Skip silently.
-      if (code !== "P2021") {
-        console.warn("[yt-discovery] upsert failed", err);
+      if (code === "P2021") {
+        // YTCreator table doesn't exist yet (migration not run on Render).
+        // Surface the API rows ephemerally so the user still sees results —
+        // they just won't persist.
+        saved.push({
+          id: r.channelId,
+          channelId: r.channelId,
+          handle: r.handle,
+          title: r.title,
+          description: r.description || null,
+          subscribers: r.subscribers,
+          videoCount: r.videoCount,
+          viewCount: r.viewCount,
+          country: r.country,
+          language: r.language,
+          category: r.category,
+          email: r.email,
+          thumbnailUrl: r.thumbnailUrl,
+          channelUrl: r.channelUrl,
+          isVerified: r.isVerified,
+          isCreator: r.isCreator,
+          qualityScore: r.qualityScore,
+          detectionNote: r.detectionNote,
+          lastContactAt: null,
+        });
+        continue;
       }
+      console.warn("[yt-search] upsert failed", err);
     }
   }
 
@@ -235,12 +226,10 @@ export async function pollYTDiscoveryAction(args: {
 
   return {
     ok: true,
-    status: "SUCCEEDED",
-    statusMessage: status.statusMessage,
-    finished: true,
     found: rowsAll.length,
-    saved,
+    saved: saved.length,
     filteredOut: Math.max(0, rowsAll.length - rowsFiltered.length),
+    creators: saved,
   };
 }
 
@@ -280,6 +269,3 @@ export async function clearYTCreatorsAction() {
   revalidatePath("/agents/youtube");
   return { ok: true as const };
 }
-
-// Silence the unused-but-exported error type lint without re-importing.
-void ApifyYTError;

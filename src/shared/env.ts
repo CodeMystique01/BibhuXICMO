@@ -105,19 +105,13 @@ const envSchema = z.object({
     .default("afanasenko~instagram-profile-scraper"),
 
   /**
-   * Optional dedicated Apify token for the YouTube creator discovery
-   * agent. Falls back to APIFY_TOKEN when unset — useful when you want
-   * YT scraping to bill against a separate Apify account.
+   * Google YouTube Data API v3 key. Powers /agents/youtube creator
+   * search — same source the QuickAds reference uses. Get one at
+   * https://console.cloud.google.com/apis/credentials after enabling
+   * the "YouTube Data API v3" service. Free tier is 10 000 units/day
+   * (≈99 keyword searches with full channel-detail enrichment).
    */
-  APIFY_YT_TOKEN: z.string().optional(),
-  /**
-   * Apify actor id for YouTube creator search. Returns videos +
-   * channel metadata for a list of search keywords; we group results
-   * by channel and apply a smart-creator heuristic to filter out
-   * corporate / brand channels.
-   * Default: `streamers~youtube-scraper`.
-   */
-  APIFY_YT_ACTOR_ID: z.string().default("streamers~youtube-scraper"),
+  YOUTUBE_API_KEY: z.string().optional(),
 
   SENTRY_DSN: z.string().optional(),
 

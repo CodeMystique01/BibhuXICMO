@@ -1,0 +1,21 @@
+fix(youtube): use YouTube Data API v3 instead of Apify
+
+The user has a Google YouTube API key, not an Apify YT token. Switch
+the YT agent to call Google's YouTube Data API v3 directly — same path
+the QuickAds reference repo uses, and a much simpler stack:
+
+- Replaced `src/integrations/youtube-apify.ts` with
+  `src/integrations/youtube-data-api.ts` that does the QuickAds
+  scraper.py flow: search.list (type=channel) → channels.list
+  (snippet,statistics,brandingSettings) → smart-creator heuristic.
+- Collapsed start/poll server actions into a single synchronous
+  `searchYTCreatorsAction` (YT Data API is fast enough — 1–3 s total).
+- Stripped polling, localStorage, RunInfo, and Progress UI from the
+  client component; pressing "Find Creators" now just shows a spinner
+  and renders results when the action returns.
+- Env: dropped APIFY_YT_TOKEN + APIFY_YT_ACTOR_ID, added YOUTUBE_API_KEY
+  in env.ts, .env.example, and render.yaml. Setup hint links to
+  console.cloud.google.com after enabling YouTube Data API v3.
+- Quota guidance: search.list = 100 units, channels.list (batched) = 1
+  unit. Free 10 000-unit tier ≈ 99 keyword searches/day. Quota-exceeded
+  and invalid-key errors are surfaced verbatim to the toast.
