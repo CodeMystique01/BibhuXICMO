@@ -125,7 +125,10 @@ function rawToPlatformCounts(
   const out: Partial<Record<PlatformKey, PlatformCounts>> = {};
   for (const row of rawProviders) {
     const key = mapProvider(row.provider);
-    if (!key) continue;
+    if (!key) {
+      console.warn(`[ai-citations] Unrecognized provider "${row.provider}" — adjust mapProvider() alias table.`);
+      continue;
+    }
     const citations = row.citations ?? row.mentions ?? 0;
     const pages = row.pages ?? 0;
     out[key] = { citations, pages };
@@ -145,6 +148,33 @@ export async function loadAiCitationsAction(args?: {
   if (!domain) return { ok: true, data: null };
   const snaps = await loadLatestSnapshots(workspace.id, domain, 2);
   return { ok: true, data: bundleFromSnapshots(domain, "us", snaps) };
+}
+
+/**
+ * Returns the raw Apify dataset from the latest snapshot — used by the
+ * panel's "View raw response" debug expander when no platforms get
+ * parsed, so the user can paste it back to us for field-mapping fixes.
+ */
+export async function getLatestRawSnapshotAction(args?: {
+  domain?: string;
+}): Promise<{ ok: true; raw: unknown; fetchedAt: string } | { ok: false; error: string }> {
+  const { workspace } = await requireWorkspace();
+  const domain = normalizeDomain(args?.domain ?? workspace.websiteUrl ?? "");
+  if (!domain) return { ok: false, error: "No domain configured." };
+  try {
+    const row = await prisma.aiCitationSnapshot.findFirst({
+      where: { workspaceId: workspace.id, domain },
+      orderBy: { fetchedAt: "desc" },
+    });
+    if (!row) return { ok: false, error: "No snapshot yet — run a check first." };
+    return { ok: true, raw: row.raw, fetchedAt: row.fetchedAt.toISOString() };
+  } catch (err) {
+    const code = (err as { code?: string })?.code;
+    if (code === "P2021" || code === "P2022") {
+      return { ok: false, error: "AiCitationSnapshot table missing — run prisma db push." };
+    }
+    return { ok: false, error: (err as Error).message };
+  }
 }
 
 // ---------------------------------------------------------------------------

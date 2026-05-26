@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Info, Loader2, RefreshCw, Sparkles } from "lucide-react";
+import { ChevronDown, ChevronRight, Info, Loader2, RefreshCw, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/frontend/components/ui/button";
 import {
@@ -14,6 +14,7 @@ import { cn } from "@/shared/utils";
 import {
   startAiCitationsRefreshAction,
   pollAiCitationsAction,
+  getLatestRawSnapshotAction,
 } from "./ai-citations-actions";
 import {
   PLATFORMS,
@@ -223,8 +224,64 @@ export function AiCitationsPanel({
         )}
 
         {bundle && <CitationsBody bundle={bundle} />}
+
+        {bundle && Object.keys(bundle.current).length === 0 && (
+          <RawDebugExpander />
+        )}
       </CardContent>
     </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+function RawDebugExpander() {
+  const [open, setOpen] = useState(false);
+  const [raw, setRaw] = useState<unknown | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function toggle() {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    setLoading(true);
+    const res = await getLatestRawSnapshotAction();
+    setLoading(false);
+    if (!res.ok) {
+      toast.error("Couldn't load raw response", { description: res.error });
+      return;
+    }
+    setRaw(res.raw);
+    setOpen(true);
+  }
+
+  return (
+    <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs">
+      <div className="font-medium text-amber-700 dark:text-amber-400">
+        Actor returned a response but no AI platform data was extracted.
+      </div>
+      <p className="mt-1 text-muted-foreground">
+        The Apify actor used field names we don&apos;t yet recognize. Expand
+        the raw response below and share it so we can add the mapping.
+      </p>
+      <button
+        type="button"
+        onClick={toggle}
+        className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-amber-700 hover:underline dark:text-amber-400"
+      >
+        {open ? (
+          <ChevronDown className="h-3 w-3" />
+        ) : (
+          <ChevronRight className="h-3 w-3" />
+        )}
+        {loading ? "Loading…" : open ? "Hide raw response" : "View raw response"}
+      </button>
+      {open && raw !== null && (
+        <pre className="mt-2 max-h-80 overflow-auto rounded border bg-background p-2 text-[10px] leading-relaxed">
+          {JSON.stringify(raw, null, 2)}
+        </pre>
+      )}
+    </div>
   );
 }
 

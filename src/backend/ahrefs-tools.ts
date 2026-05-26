@@ -601,15 +601,126 @@ export function normalizeTopWebsites(
 
 // GEO Tool — AI Visibility
 export function startAiVisibility(domain: string, country = "us") {
-  return startActorRun({ url: domain, country, include_ai_visibility: true });
+  return startActorRun({
+    url: domain,
+    country,
+    mode: "subdomains",
+    include_ai_visibility: true,
+  });
 }
+
+/**
+ * The radeance/ahrefs-scraper actor returns different shapes depending on
+ * its build version — sometimes `{type:"ai_visibility", providers:[...]}`,
+ * sometimes platform-name keys at the top level, sometimes nested under
+ * `ai_visibility`. Walk the items recursively trying every known shape.
+ */
+function collectAiProviderRows(items: unknown[]): Record<string, unknown>[] {
+  const collected: Record<string, unknown>[] = [];
+  const PLATFORM_KEY_PATTERNS = [
+    /^chat\s*gpt$/i,
+    /^open\s*ai$/i,
+    /^gpt(\d+)?$/i,
+    /^ai[\s_-]*overview/i,
+    /^aio$/i,
+    /^sge$/i,
+    /^google[\s_-]*ai/i,
+    /^gemini$/i,
+    /^bard$/i,
+    /^perplexity$/i,
+    /^pplx$/i,
+    /^copilot$/i,
+    /^bing[\s_-]*chat$/i,
+    /^msft$/i,
+    /^grok$/i,
+    /^x\s*ai$/i,
+    /^claude$/i,
+  ];
+  const isPlatformKey = (k: string) =>
+    PLATFORM_KEY_PATTERNS.some((re) => re.test(k.trim()));
+
+  function visit(node: unknown, depth: number) {
+    if (depth > 8 || !node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (const child of node) visit(child, depth + 1);
+      return;
+    }
+    const obj = node as Record<string, unknown>;
+
+    // Shape A: array of provider rows {provider/name/platform, citations, pages, ...}
+    for (const arrKey of [
+      "by_provider",
+      "byProvider",
+      "providers",
+      "platforms",
+      "ai_providers",
+      "ai_platforms",
+      "breakdown",
+    ]) {
+      const arr = obj[arrKey];
+      if (Array.isArray(arr)) {
+        for (const row of arr) {
+          if (row && typeof row === "object") {
+            collected.push(row as Record<string, unknown>);
+          }
+        }
+      }
+    }
+
+    // Shape B: platform names as keys at this level → wrap as {provider, ...value}
+    for (const [key, value] of Object.entries(obj)) {
+      if (isPlatformKey(key) && value && typeof value === "object" && !Array.isArray(value)) {
+        collected.push({ provider: key, ...(value as Record<string, unknown>) });
+      }
+    }
+
+    // Shape C: nested ai_visibility / ai container → recurse
+    for (const nestedKey of [
+      "ai_visibility",
+      "aiVisibility",
+      "ai",
+      "ai_search",
+      "data",
+      "result",
+    ]) {
+      if (obj[nestedKey]) visit(obj[nestedKey], depth + 1);
+    }
+  }
+
+  for (const item of items) visit(item, 0);
+
+  // De-dupe by provider name (case-insensitive)
+  const seen = new Set<string>();
+  return collected.filter((row) => {
+    const name = String(
+      (row.provider as string) ||
+        (row.name as string) ||
+        (row.platform as string) ||
+        ""
+    ).toLowerCase();
+    if (!name || seen.has(name)) return false;
+    seen.add(name);
+    return true;
+  });
+}
+
 export function normalizeAiVisibility(
   items: unknown[],
   params: { domain: string }
 ): AiVisibilityResult {
   const o = findByType(items, "ai_visibility", "aiVisibility", "ai");
-  const providers = o ? asArray(o.by_provider).concat(asArray(o.providers)) : [];
+  const providers = collectAiProviderRows(items);
   const queries = o ? asArray(o.top_queries).concat(asArray(o.queries)) : [];
+
+  if (providers.length === 0) {
+    console.warn(
+      `[ahrefs-tools] AI Visibility returned ${items.length} item(s) but no provider data was extracted. Raw keys:`,
+      items.slice(0, 3).map((it) =>
+        it && typeof it === "object" ? Object.keys(it as Record<string, unknown>) : typeof it
+      )
+    );
+  }
+
   return {
     domain: params.domain,
     score: o ? pickNumber(o, ["score", "ai_visibility_score", "aiv"]) : null,
@@ -618,11 +729,28 @@ export function normalizeAiVisibility(
       .map((row) => {
         const r = (row && typeof row === "object" ? row : {}) as Record<string, unknown>;
         return {
-          provider: pickString(r, ["provider", "name", "platform"]) ?? "",
-          score: pickNumber(r, ["score", "ai_visibility_score"]),
-          mentions: pickNumber(r, ["mentions", "count"]),
-          citations: pickNumber(r, ["citations", "citation_count", "mentions", "count"]),
-          pages: pickNumber(r, ["pages", "page_count", "unique_pages", "urls"]),
+          provider:
+            pickString(r, ["provider", "name", "platform", "ai", "engine"]) ?? "",
+          score: pickNumber(r, ["score", "ai_visibility_score", "visibility"]),
+          mentions: pickNumber(r, ["mentions", "count", "total"]),
+          citations: pickNumber(r, [
+            "citations",
+            "citation_count",
+            "citations_count",
+            "total_citations",
+            "mentions",
+            "count",
+            "total",
+          ]),
+          pages: pickNumber(r, [
+            "pages",
+            "page_count",
+            "pages_count",
+            "unique_pages",
+            "unique_urls",
+            "urls",
+            "url_count",
+          ]),
         };
       })
       .filter((row) => row.provider.length > 0)
