@@ -237,7 +237,16 @@ export function GeoTools({
 
 // ---------------------------------------------------------------------------
 function AiVisibilityTool({ defaultDomain }: { defaultDomain: string }) {
-  const [domain, setDomain] = useState(defaultDomain);
+  // The Apify Ahrefs scraper's AI Visibility flag needs a brand or keyword
+  // (not a domain). Default to the brand inferred from the workspace URL,
+  // but let the user override with any topic they want to track.
+  const defaultBrand = (() => {
+    const s = defaultDomain.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0];
+    if (!s) return "";
+    const root = s.split(".")[0];
+    return root.charAt(0).toUpperCase() + root.slice(1);
+  })();
+  const [keyword, setKeyword] = useState(defaultBrand);
   const [country, setCountry] = useState("us");
   const [data, setData] = useState<AiVisibilityResult | null>(null);
   const [meta, setMeta] = useState<{ fromCache: boolean; at: Date } | null>(null);
@@ -245,26 +254,25 @@ function AiVisibilityTool({ defaultDomain }: { defaultDomain: string }) {
   const [pending, startTransition] = useTransition();
 
   function run() {
-    if (!domain.trim()) {
-      toast.error("Enter a domain");
+    if (!keyword.trim()) {
+      toast.error("Enter a brand or keyword");
       return;
     }
     startTransition(async () => {
       setData(null);
       setMeta(null);
       setProgress(null);
-      const res = await runAiVisibilityAction({ domain, country });
+      const res = await runAiVisibilityAction({ keyword, country });
       if (!res.ok) {
         toast.error("Lookup failed", { description: res.error, duration: 8000 });
         return;
       }
       if ("pending" in res) {
         setProgress({ elapsedMs: 0 });
-        const normDomain = domain.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0];
         const final = await pollUntilDone(
           () => ({
             tool: "AI_VISIBILITY",
-            domain: normDomain,
+            keyword: keyword.trim(),
             country,
             runId: res.runId,
             datasetId: res.datasetId,
@@ -290,12 +298,12 @@ function AiVisibilityTool({ defaultDomain }: { defaultDomain: string }) {
     <div className="space-y-4">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_180px_auto]">
         <div>
-          <Label htmlFor="av-domain">Domain</Label>
+          <Label htmlFor="av-keyword">Brand or keyword</Label>
           <Input
-            id="av-domain"
-            value={domain}
-            onChange={(e) => setDomain(e.target.value)}
-            placeholder="example.com"
+            id="av-keyword"
+            value={keyword}
+            onChange={(e) => setKeyword(e.target.value)}
+            placeholder="e.g. github, agentic ai, hubspot"
             className="mt-1.5"
             disabled={pending}
             onKeyDown={(e) => {
@@ -321,33 +329,33 @@ function AiVisibilityTool({ defaultDomain }: { defaultDomain: string }) {
         <Card className="bg-muted/20">
           <CardContent className="space-y-4 py-4">
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-2">
-              <Stat label="AI Visibility score" value={data.score?.toString() ?? "—"} suffix="/100" />
-              <Stat label="Mentions (30d)" value={fmtNumber(data.mentions)} />
+              <Stat label="Total citations" value={fmtNumber(data.totalCitations)} />
+              <Stat label="Platforms detected" value={data.byProvider.length.toString()} />
             </div>
             {data.byProvider.length > 0 && (
               <div>
-                <div className="mb-1.5 text-xs font-medium text-muted-foreground">By provider</div>
+                <div className="mb-1.5 text-xs font-medium text-muted-foreground">By platform</div>
                 <ul className="grid gap-2 sm:grid-cols-3">
                   {data.byProvider.map((p) => (
                     <li key={p.provider} className="rounded-md border bg-card px-3 py-2 text-sm">
                       <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{p.provider}</div>
                       <div className="mt-0.5 flex items-baseline gap-2">
-                        <span className="text-lg font-semibold tabular-nums">{p.score ?? "—"}</span>
-                        <span className="text-[10px] text-muted-foreground">{fmtNumber(p.mentions)} mentions</span>
+                        <span className="text-lg font-semibold tabular-nums">{fmtNumber(p.citations)}</span>
+                        <span className="text-[10px] text-muted-foreground">citations</span>
                       </div>
                     </li>
                   ))}
                 </ul>
               </div>
             )}
-            {data.topQueries.length > 0 && (
+            {data.topPages.length > 0 && (
               <div>
-                <div className="mb-1.5 text-xs font-medium text-muted-foreground">Top queries citing this domain</div>
+                <div className="mb-1.5 text-xs font-medium text-muted-foreground">Top cited pages</div>
                 <ul className="divide-y rounded-md border">
-                  {data.topQueries.map((q) => (
-                    <li key={q.query} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
-                      <span className="truncate">{q.query}</span>
-                      <span className="shrink-0 text-xs text-muted-foreground">{fmtNumber(q.mentions)}</span>
+                  {data.topPages.slice(0, 10).map((p) => (
+                    <li key={p.url} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                      <span className="truncate">{p.url}</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">{fmtNumber(p.mentions)}</span>
                     </li>
                   ))}
                 </ul>

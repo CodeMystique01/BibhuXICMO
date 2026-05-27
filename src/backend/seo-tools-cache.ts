@@ -60,7 +60,7 @@ export type SeoToolPollInput =
   | { tool: "KEYWORD_RANK"; domain: string; keyword: string; country: string; runId: string; datasetId: string }
   | { tool: "SERP_OVERVIEW"; keyword: string; country: string; runId: string; datasetId: string }
   | { tool: "TOP_WEBSITES"; country: string; category: string | null; runId: string; datasetId: string }
-  | { tool: "AI_VISIBILITY"; domain: string; country: string; runId: string; datasetId: string };
+  | { tool: "AI_VISIBILITY"; keyword: string; country: string; runId: string; datasetId: string };
 
 // --------------------------------------------------------------------------
 // DB cache I/O
@@ -302,14 +302,15 @@ export async function runTopWebsites(args: {
 
 export async function runAiVisibility(args: {
   workspaceId: string;
-  domain: string;
+  /** Brand or keyword to query for AI citations. */
+  keyword: string;
   country?: string;
 }): Promise<CachedToolResult<AiVisibilityResult>> {
   const input = {
-    domain: normalizeDomainArg(args.domain),
+    keyword: args.keyword.trim(),
     country: (args.country ?? "us").toLowerCase(),
   };
-  if (!input.domain) return { ok: false, error: "Enter a domain." };
+  if (!input.keyword) return { ok: false, error: "Enter a brand name or keyword." };
   const inputHash = hashInput({ ...input, tool: "AI_VISIBILITY" });
 
   const cached = await readCached<AiVisibilityResult>({
@@ -321,7 +322,7 @@ export async function runAiVisibility(args: {
   if (cached) return { ok: true, data: cached.result, cachedAt: cached.cachedAt, fromCache: true };
 
   try {
-    const handle = await startAiVisibility(input.domain, input.country);
+    const handle = await startAiVisibility(input.keyword, input.country);
     return { ok: true, pending: true, runId: handle.runId, datasetId: handle.datasetId, message: PENDING_MSG };
   } catch (err) {
     return { ok: false, error: errorMessage(err) };
@@ -449,13 +450,13 @@ export async function pollSeoTool(
       return { ok: true, status: "DONE", data, cachedAt: new Date() };
     }
     case "AI_VISIBILITY": {
-      const data = normalizeAiVisibility(items, { domain: input.domain });
-      const ih = hashInput({ domain: input.domain, country: input.country, tool: "AI_VISIBILITY" });
+      const data = normalizeAiVisibility(items, { keyword: input.keyword });
+      const ih = hashInput({ keyword: input.keyword, country: input.country, tool: "AI_VISIBILITY" });
       await writeCached({
         workspaceId,
         tool: "AI_VISIBILITY",
         inputHash: ih,
-        input: { domain: input.domain, country: input.country },
+        input: { keyword: input.keyword, country: input.country },
         result: data,
       });
       return { ok: true, status: "DONE", data, cachedAt: new Date() };

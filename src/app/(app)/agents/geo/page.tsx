@@ -3,6 +3,8 @@ import { Sparkles, Check, X } from "lucide-react";
 import { requireWorkspace } from "@/backend/workspace";
 import { prisma } from "@/backend/db";
 import { hasSeoApifyToken } from "@/backend/ahrefs-tools";
+import { hashInput } from "@/backend/seo-tools-cache";
+import type { AiVisibilityResult } from "@/backend/ahrefs-tools";
 import {
   Card,
   CardContent,
@@ -33,94 +35,71 @@ function normalizeDomain(input: string | null | undefined): string {
     .split("/")[0];
 }
 
-const CITATIONS_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
-
-function mapProviderToPlatform(name: string): PlatformKey | null {
-  const s = name.toLowerCase().replace(/[^a-z0-9]/g, "");
-  if (!s) return null;
-  if (s.includes("aioverview") || s.includes("googleaio") || s === "aio" || s === "sge")
-    return "aiOverviews";
-  if (s.includes("gemini") || s.includes("bard") || s.startsWith("googleai"))
-    return "gemini";
-  if (
-    s.includes("chatgpt") ||
-    s.includes("openai") ||
-    s.startsWith("gpt") ||
-    s.startsWith("o1") ||
-    s.startsWith("o3") ||
-    s.startsWith("o4") ||
-    s.includes("davinci")
-  )
-    return "chatgpt";
-  if (
-    s.includes("claude") ||
-    s.includes("anthropic") ||
-    s.includes("haiku") ||
-    s.includes("sonnet") ||
-    s.includes("opus")
-  )
-    return "chatgpt";
-  if (s.includes("perplexity") || s === "pplx") return "perplexity";
-  if (s.includes("copilot") || s.includes("bingchat") || s === "bing") return "copilot";
-  if (s.includes("grok") || s === "xai") return "grok";
-  return null;
+function brandFromDomain(domain: string): string {
+  if (!domain) return "";
+  const root = domain.split(".")[0];
+  return root.charAt(0).toUpperCase() + root.slice(1);
 }
 
-function aggregateProbes(
-  probes: Array<{ provider: string; cited: boolean; prompt: string; checkedAt: Date }>,
-  windowStart: number,
-  windowEnd: number
-): Partial<Record<PlatformKey, PlatformCounts>> {
-  const byPlatform = new Map<PlatformKey, { citations: number; prompts: Set<string> }>();
-  for (const p of probes) {
-    if (!p.cited) continue;
-    const t = p.checkedAt.getTime();
-    if (t < windowStart || t >= windowEnd) continue;
-    const platform = mapProviderToPlatform(p.provider);
-    if (!platform) continue;
-    if (!byPlatform.has(platform)) {
-      byPlatform.set(platform, { citations: 0, prompts: new Set() });
-    }
-    const entry = byPlatform.get(platform)!;
-    entry.citations++;
-    entry.prompts.add(p.prompt.trim().toLowerCase());
-  }
-  const out: Partial<Record<PlatformKey, PlatformCounts>> = {};
-  for (const [k, v] of byPlatform.entries()) {
-    out[k] = { citations: v.citations, pages: v.prompts.size };
-  }
-  return out;
+function isPlatformKey(s: string): s is PlatformKey {
+  return (
+    s === "aiOverviews" ||
+    s === "chatgpt" ||
+    s === "gemini" ||
+    s === "perplexity" ||
+    s === "copilot" ||
+    s === "grok"
+  );
 }
 
+/**
+ * Load the most-recent cached Apify AI_VISIBILITY run and turn it into a
+ * panel bundle. No new Apify call here — initial render just reads what's
+ * already cached in SeoToolRun for the workspace.
+ */
 async function loadInitialBundle(
   workspaceId: string,
   domain: string
 ): Promise<AiCitationsBundle | null> {
   if (!domain) return null;
-  const now = Date.now();
-  const probes = await prisma.geoQuery.findMany({
-    where: {
-      workspaceId,
-      checkedAt: { gte: new Date(now - 2 * CITATIONS_WINDOW_MS) },
-    },
-    select: { provider: true, cited: true, prompt: true, checkedAt: true },
-  });
-  if (probes.length === 0) return null;
-  const current = aggregateProbes(probes, now - CITATIONS_WINDOW_MS, now);
-  const previous = aggregateProbes(
-    probes,
-    now - 2 * CITATIONS_WINDOW_MS,
-    now - CITATIONS_WINDOW_MS
-  );
-  const latestTs = probes.reduce((a, p) => Math.max(a, p.checkedAt.getTime()), 0);
-  return {
-    domain,
-    country: "us",
-    fetchedAt: new Date(latestTs).toISOString(),
-    previousAt: new Date(now - CITATIONS_WINDOW_MS).toISOString(),
-    current,
-    previous,
-  };
+  const keyword = brandFromDomain(domain);
+  if (!keyword) return null;
+  try {
+    const ih = hashInput({ keyword, country: "us", tool: "AI_VISIBILITY" });
+    const row = await prisma.seoToolRun.findUnique({
+      where: {
+        workspaceId_tool_inputHash: {
+          workspaceId,
+          tool: "AI_VISIBILITY",
+          inputHash: ih,
+        },
+      },
+    });
+    if (!row) return null;
+    const result = row.result as AiVisibilityResult;
+    const current: Partial<Record<PlatformKey, PlatformCounts>> = {};
+    const previous: Partial<Record<PlatformKey, PlatformCounts>> = {};
+    for (const r of result.byProvider) {
+      if (!isPlatformKey(r.platform)) continue;
+      const k = r.platform as PlatformKey;
+      current[k] = { citations: r.citations ?? 0, pages: 0 };
+      if (r.priorMonthCitations !== null && r.priorMonthCitations !== undefined) {
+        previous[k] = { citations: r.priorMonthCitations ?? 0, pages: 0 };
+      }
+    }
+    return {
+      domain,
+      country: "us",
+      fetchedAt: row.createdAt.toISOString(),
+      previousAt: null,
+      current,
+      previous,
+    };
+  } catch (err) {
+    const code = (err as { code?: string })?.code;
+    if (code === "P2021" || code === "P2022") return null;
+    throw err;
+  }
 }
 
 export default async function GeoAgentPage() {

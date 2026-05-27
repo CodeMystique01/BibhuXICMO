@@ -124,25 +124,31 @@ export type TopWebsitesResult = {
 };
 
 export type AiVisibilityResult = {
-  domain: string;
-  /** 0–100 — share-of-voice in AI-generated answers across LLMs. */
-  score: number | null;
-  /** Mention count across all probed LLMs in the last 30d. */
-  mentions: number | null;
+  /** Brand or keyword we queried for. */
+  keyword: string;
+  /** Sum of citations across every model. */
+  totalCitations: number | null;
   /**
-   * Per-provider breakdown surfaced by the actor when available.
-   * `citations` = total mentions/citations from that provider.
-   * `pages` = unique URLs on the domain that were cited.
+   * Per-platform breakdown from the actor's `citations_by_model` array.
+   * `model` is the platform name normalised to lowercase (e.g. "chatgpt",
+   * "gemini", "perplexity", "copilot", "googleaioverviews", "googleaimode").
    */
   byProvider: Array<{
     provider: string;
-    score: number | null;
-    mentions: number | null;
+    /** Normalised platform key the UI uses to find a tile. */
+    platform: string;
     citations: number | null;
-    pages: number | null;
+    /** Last full month's citation count for delta computation. */
+    lastMonthCitations: number | null;
+    /** Citation count from the month before that. */
+    priorMonthCitations: number | null;
   }>;
-  /** Top queries the domain is cited for. */
-  topQueries: Array<{ query: string; mentions: number | null }>;
+  /** Most-cited pages overall for this keyword (top 20, all domains). */
+  topPages: Array<{ url: string; mentions: number | null }>;
+  /** Most-cited domains overall for this keyword (top 20). */
+  topDomains: Array<{ domain: string; mentions: number | null }>;
+  /** Monthly trend per model (raw, for chart rendering later). */
+  monthlyByModel: Array<{ model: string; date: string; citations: number | null }>;
   raw: unknown;
 };
 
@@ -600,11 +606,15 @@ export function normalizeTopWebsites(
 }
 
 // GEO Tool — AI Visibility
-export function startAiVisibility(domain: string, country = "us") {
+//
+// The `include_ai_visibility` flag is silently ignored unless the input
+// includes a `keyword` (brand or topic) — sending just `url` returns
+// traffic/authority/backlinks only. Always pass the brand or keyword we
+// want to track citations for.
+export function startAiVisibility(keyword: string, country = "us") {
   return startActorRun({
-    url: domain,
+    keyword,
     country,
-    mode: "subdomains",
     include_ai_visibility: true,
   });
 }
@@ -704,67 +714,168 @@ function collectAiProviderRows(items: unknown[]): Record<string, unknown>[] {
   });
 }
 
+/**
+ * Map an actor model name (e.g. "Chatgpt", "GoogleAIOverviews", "GoogleAIMode")
+ * to the lowercase platform key the UI uses. We normalise aggressively so
+ * minor casing/spelling drift between actor versions still maps cleanly.
+ */
+function normalizePlatformKey(name: string): string {
+  const s = name.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (!s) return "";
+  if (s.includes("aioverview") || s === "googleaioverviews" || s === "aio" || s === "sge")
+    return "aiOverviews";
+  if (s === "googleaimode" || s.includes("aimode") || (s.includes("google") && s.includes("ai")))
+    // GoogleAIMode also folds into AI Overviews — same Google AI surface.
+    return "aiOverviews";
+  if (s.startsWith("chatgpt") || s.includes("openai") || s.startsWith("gpt"))
+    return "chatgpt";
+  if (s.includes("claude") || s.includes("anthropic")) return "chatgpt";
+  if (s.includes("gemini") || s.includes("bard")) return "gemini";
+  if (s.includes("perplexity") || s === "pplx") return "perplexity";
+  if (s.includes("copilot") || s.includes("bingchat")) return "copilot";
+  if (s.includes("grok") || s === "xai") return "grok";
+  return "";
+}
+
 export function normalizeAiVisibility(
   items: unknown[],
-  params: { domain: string }
+  params: { keyword: string }
 ): AiVisibilityResult {
   const o = findByType(items, "ai_visibility", "aiVisibility", "ai");
-  const providers = collectAiProviderRows(items);
-  const queries = o ? asArray(o.top_queries).concat(asArray(o.queries)) : [];
 
-  if (providers.length === 0) {
+  // The actor returns `citations_by_model: [{model, citations}, ...]` and
+  // `monthly_citations_by_model: [{model, date, citations}, ...]`. Both can
+  // also live under nested keys depending on actor version, so we keep the
+  // fallback recursive scan from `collectAiProviderRows` as a safety net.
+  const byModelRaw = o
+    ? asArray(o.citations_by_model).concat(asArray(o.citationsByModel))
+    : [];
+  const monthlyRaw = o
+    ? asArray(o.monthly_citations_by_model).concat(asArray(o.monthlyCitationsByModel))
+    : [];
+  const topPagesRaw = o
+    ? asArray(o.top_cited_pages).concat(asArray(o.topCitedPages))
+    : [];
+  const topDomainsRaw = o
+    ? asArray(o.top_cited_domains).concat(asArray(o.topCitedDomains))
+    : [];
+
+  // ----- per-platform citations -----
+  const platformAgg = new Map<string, { provider: string; citations: number }>();
+  for (const row of byModelRaw) {
+    const r = (row && typeof row === "object" ? row : {}) as Record<string, unknown>;
+    const name =
+      pickString(r, ["model", "provider", "name", "platform", "ai", "engine"]) ?? "";
+    if (!name) continue;
+    const platform = normalizePlatformKey(name);
+    if (!platform) continue;
+    const citations = pickNumber(r, ["citations", "citation_count", "total_citations"]) ?? 0;
+    const existing = platformAgg.get(platform);
+    if (existing) {
+      existing.citations += citations;
+    } else {
+      platformAgg.set(platform, { provider: name, citations });
+    }
+  }
+
+  // Fallback: if the structured shape is empty, recurse the items looking
+  // for any platform-key-shaped data (covers older actor builds).
+  if (platformAgg.size === 0) {
+    const fallback = collectAiProviderRows(items);
+    for (const row of fallback) {
+      const r = (row && typeof row === "object" ? row : {}) as Record<string, unknown>;
+      const name =
+        pickString(r, ["model", "provider", "name", "platform", "ai", "engine"]) ?? "";
+      if (!name) continue;
+      const platform = normalizePlatformKey(name);
+      if (!platform) continue;
+      const citations =
+        pickNumber(r, [
+          "citations",
+          "citation_count",
+          "citations_count",
+          "total_citations",
+          "mentions",
+          "count",
+          "total",
+        ]) ?? 0;
+      const existing = platformAgg.get(platform);
+      if (existing) {
+        existing.citations += citations;
+      } else {
+        platformAgg.set(platform, { provider: name, citations });
+      }
+    }
+  }
+
+  // ----- per-platform monthly aggregation for deltas -----
+  const monthlyAgg = new Map<string, Map<string, number>>(); // platform -> (YYYY-MM -> citations)
+  const allMonths = new Set<string>();
+  const monthlyClean: Array<{ model: string; date: string; citations: number | null }> = [];
+  for (const row of monthlyRaw) {
+    const r = (row && typeof row === "object" ? row : {}) as Record<string, unknown>;
+    const name = pickString(r, ["model", "provider", "name", "platform"]) ?? "";
+    const date = pickString(r, ["date", "month", "period"]) ?? "";
+    if (!name || !date) continue;
+    const platform = normalizePlatformKey(name);
+    if (!platform) continue;
+    const ym = date.slice(0, 7); // YYYY-MM
+    const citations = pickNumber(r, ["citations", "count"]) ?? 0;
+    if (!monthlyAgg.has(platform)) monthlyAgg.set(platform, new Map());
+    const m = monthlyAgg.get(platform)!;
+    m.set(ym, (m.get(ym) ?? 0) + citations);
+    allMonths.add(ym);
+    monthlyClean.push({ model: name, date: ym, citations });
+  }
+  const sortedMonths = [...allMonths].sort();
+  const lastMonth = sortedMonths[sortedMonths.length - 1];
+  const priorMonth = sortedMonths[sortedMonths.length - 2];
+
+  if (platformAgg.size === 0) {
     console.warn(
-      `[ahrefs-tools] AI Visibility returned ${items.length} item(s) but no provider data was extracted. Raw keys:`,
+      `[ahrefs-tools] AI Visibility for "${params.keyword}" returned ${items.length} item(s) but no per-platform data. Did the actor include type:"ai_visibility"?`,
       items.slice(0, 3).map((it) =>
         it && typeof it === "object" ? Object.keys(it as Record<string, unknown>) : typeof it
       )
     );
   }
 
+  const byProvider = [...platformAgg.entries()].map(([platform, v]) => {
+    const monthly = monthlyAgg.get(platform);
+    return {
+      provider: v.provider,
+      platform,
+      citations: v.citations,
+      lastMonthCitations: monthly && lastMonth ? monthly.get(lastMonth) ?? 0 : null,
+      priorMonthCitations: monthly && priorMonth ? monthly.get(priorMonth) ?? 0 : null,
+    };
+  });
+
+  const totalCitations = o ? pickNumber(o, ["total_ai_citations", "totalAiCitations"]) : null;
+
   return {
-    domain: params.domain,
-    score: o ? pickNumber(o, ["score", "ai_visibility_score", "aiv"]) : null,
-    mentions: o ? pickNumber(o, ["mentions", "total_mentions"]) : null,
-    byProvider: providers
-      .map((row) => {
-        const r = (row && typeof row === "object" ? row : {}) as Record<string, unknown>;
-        return {
-          provider:
-            pickString(r, ["provider", "name", "platform", "ai", "engine"]) ?? "",
-          score: pickNumber(r, ["score", "ai_visibility_score", "visibility"]),
-          mentions: pickNumber(r, ["mentions", "count", "total"]),
-          citations: pickNumber(r, [
-            "citations",
-            "citation_count",
-            "citations_count",
-            "total_citations",
-            "mentions",
-            "count",
-            "total",
-          ]),
-          pages: pickNumber(r, [
-            "pages",
-            "page_count",
-            "pages_count",
-            "unique_pages",
-            "unique_urls",
-            "urls",
-            "url_count",
-          ]),
-        };
-      })
-      .filter((row) => row.provider.length > 0)
-      .slice(0, 8),
-    topQueries: queries
-      .map((row) => {
-        const r = (row && typeof row === "object" ? row : {}) as Record<string, unknown>;
-        return {
-          query: pickString(r, ["query", "prompt", "keyword"]) ?? "",
-          mentions: pickNumber(r, ["mentions", "count"]),
-        };
-      })
-      .filter((row) => row.query.length > 0)
-      .slice(0, 10),
+    keyword: params.keyword,
+    totalCitations:
+      totalCitations ??
+      (byProvider.length > 0
+        ? byProvider.reduce((acc, r) => acc + (r.citations ?? 0), 0)
+        : null),
+    byProvider: byProvider.sort((a, b) => (b.citations ?? 0) - (a.citations ?? 0)),
+    topPages: topPagesRaw.slice(0, 20).map((row) => {
+      const r = (row && typeof row === "object" ? row : {}) as Record<string, unknown>;
+      return {
+        url: pickString(r, ["url", "page", "link"]) ?? "",
+        mentions: pickNumber(r, ["mentions", "citations", "count"]),
+      };
+    }).filter((r) => r.url.length > 0),
+    topDomains: topDomainsRaw.slice(0, 20).map((row) => {
+      const r = (row && typeof row === "object" ? row : {}) as Record<string, unknown>;
+      return {
+        domain: pickString(r, ["domain", "host", "site"]) ?? "",
+        mentions: pickNumber(r, ["mentions", "citations", "count"]),
+      };
+    }).filter((r) => r.domain.length > 0),
+    monthlyByModel: monthlyClean.slice(0, 200),
     raw: items,
   };
 }

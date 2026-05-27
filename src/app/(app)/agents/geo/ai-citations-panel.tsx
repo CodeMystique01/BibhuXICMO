@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
-import { Info, Loader2, RefreshCw, Sparkles, Zap } from "lucide-react";
+import { useEffect, useRef, useState, useTransition } from "react";
+import { Info, Loader2, Play, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/frontend/components/ui/button";
 import {
@@ -12,10 +12,9 @@ import {
 } from "@/frontend/components/ui/card";
 import { cn } from "@/shared/utils";
 import {
-  backfillAiOverviewsAction,
-  getProviderStatusAction,
-  refreshAiCitationsAction,
-  type ProviderStatus,
+  loadAiCitationsAction,
+  pollAiCitationsRunAction,
+  startAiCitationsRunAction,
 } from "./ai-citations-actions";
 import {
   PLATFORMS,
@@ -34,11 +33,8 @@ function fmtCount(n: number | undefined | null): string {
 function delta(current?: PlatformCounts, previous?: PlatformCounts) {
   const c = current?.citations;
   const p = previous?.citations;
-  const pc = current?.pages;
-  const pp = previous?.pages;
   return {
     citationsDelta: c !== undefined && p !== undefined ? c - p : null,
-    pagesDelta: pc !== undefined && pp !== undefined ? pc - pp : null,
   };
 }
 
@@ -105,61 +101,84 @@ export function AiCitationsPanel({
   domain: string;
 }) {
   const [bundle, setBundle] = useState<AiCitationsBundle | null>(initial);
-  const [status, setStatus] = useState<ProviderStatus | null>(null);
   const [pending, startTransition] = useTransition();
-  const [backfilling, startBackfill] = useTransition();
+  const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const pollAbort = useRef<{ cancelled: boolean }>({ cancelled: false });
 
   useEffect(() => {
-    getProviderStatusAction().then(setStatus).catch(() => undefined);
+    // Clean up any in-flight poll when the component unmounts.
+    return () => {
+      pollAbort.current.cancelled = true;
+    };
   }, []);
 
   function refresh() {
-    if (!domain) {
-      toast.error("Set your website URL in Settings first.");
-      return;
-    }
     startTransition(async () => {
-      const res = await refreshAiCitationsAction({ domain });
+      const res = await loadAiCitationsAction({ domain });
       if (!res.ok) {
-        toast.error("Couldn't refresh AI citations.");
+        toast.error("Couldn't load AI citations.");
         return;
       }
       setBundle(res.data);
-      toast.success(
-        res.data
-          ? "Re-aggregated from LLM probes."
-          : "No probes yet — click 'Run GEO check' above to populate."
-      );
+      if (res.data) toast.success("Loaded from cache.");
+      else toast.message("No cached result yet — click 'Run check' to fetch.");
     });
   }
 
-  function probeAiOverviewsNow() {
+  async function runFreshCheck() {
     if (!domain) {
       toast.error("Set your website URL in Settings first.");
       return;
     }
-    startBackfill(async () => {
-      const res = await backfillAiOverviewsAction({ domain });
+    pollAbort.current = { cancelled: false };
+    setStatusMsg("Starting Apify run…");
+    startTransition(async () => {
+      const res = await startAiCitationsRunAction({ domain });
       if (!res.ok) {
+        setStatusMsg(null);
         toast.error(res.error);
         return;
       }
-      if (res.probed === 0) {
-        toast.warning(
-          "No prompts to probe yet — click 'Run GEO check' first so we know what queries to look up."
-        );
+      if (!res.pending) {
+        setStatusMsg(null);
+        setBundle(res.data);
+        toast.success("Loaded from cache.");
         return;
       }
-      // Reload aggregation so the AI Overviews tile updates.
-      const refreshed = await refreshAiCitationsAction({ domain });
-      if (refreshed.ok) setBundle(refreshed.data);
-      toast.success(
-        `Probed ${res.probed} prompts via Google SERP — ${res.hadOverview} had an AI Overview, ${res.cited} cited ${domain}.`
-      );
+      // Poll until the actor finishes (typically 30-90s).
+      const start = Date.now();
+      setStatusMsg("Running on Apify… first call can take 60–90s.");
+      while (!pollAbort.current.cancelled) {
+        await new Promise((r) => setTimeout(r, 4000));
+        const elapsed = Math.round((Date.now() - start) / 1000);
+        setStatusMsg(`Running on Apify… ${elapsed}s elapsed.`);
+        const p = await pollAiCitationsRunAction({
+          runId: res.runId,
+          datasetId: res.datasetId,
+          domain,
+        });
+        if (!p.ok) {
+          setStatusMsg(null);
+          toast.error(p.error);
+          return;
+        }
+        if (p.status === "DONE") {
+          setStatusMsg(null);
+          setBundle(p.data);
+          const platformCount = Object.keys(p.data.current).length;
+          toast.success(`Got citations for ${platformCount} platform${platformCount === 1 ? "" : "s"}.`);
+          return;
+        }
+      }
     });
   }
 
-  const aioConfigured = !!status?.configured.includes("aiOverviews");
+  const platformsCited = bundle
+    ? PLATFORMS.filter((p) => (bundle.current[p.key]?.citations ?? 0) > 0)
+    : [];
+  const totalCitations = bundle
+    ? PLATFORMS.reduce((acc, p) => acc + (bundle.current[p.key]?.citations ?? 0), 0)
+    : 0;
 
   return (
     <Card>
@@ -170,48 +189,42 @@ export function AiCitationsPanel({
               AI citations
               <span
                 className="inline-flex"
-                title="Citations come from your GEO LLM probes (OpenAI, Anthropic, Google) plus an Apify Google SERP probe for AI Overviews. Refreshing this panel re-aggregates existing data; the 'Probe AI Overviews' button fetches fresh AIO data via Apify."
+                title="Single Apify Ahrefs scraper run with include_ai_visibility=true. Returns per-platform citation counts (ChatGPT, Gemini, Perplexity, Copilot, AI Overviews) for your brand keyword. Cached 24h."
               >
                 <Info className="h-3 w-3 text-muted-foreground" />
               </span>
             </CardTitle>
-            <p className="text-xs text-muted-foreground">
-              From LLM probes (last 30 days) · Δ vs prior 30-day window.
-            </p>
+            {bundle ? (
+              <p className="text-xs text-muted-foreground">
+                <span className="font-medium text-foreground">
+                  {totalCitations.toLocaleString()}
+                </span>{" "}
+                total citations across{" "}
+                <span className="font-medium text-foreground">{platformsCited.length}</span>{" "}
+                {platformsCited.length === 1 ? "platform" : "platforms"}
+                {platformsCited.length > 0 && (
+                  <> — {platformsCited.map((p) => p.label).join(", ")}</>
+                )}
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                One Apify Ahrefs run powers all 6 tiles. Click <b>Run check</b> to fetch.
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <Button
               size="sm"
-              variant="outline"
-              onClick={probeAiOverviewsNow}
-              disabled={backfilling || pending || !domain || !aioConfigured}
-              className="gap-1.5"
-              title={
-                aioConfigured
-                  ? "Probe AI Overviews via Apify Google SERP for your existing prompts (no new prompts generated)."
-                  : "Set APIFY_SEO_TOKEN or APIFY_TOKEN to enable."
-              }
-            >
-              {backfilling ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Zap className="h-3.5 w-3.5" />
-              )}
-              Probe AI Overviews
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={refresh}
+              onClick={runFreshCheck}
               disabled={pending || !domain}
               className="gap-1.5"
             >
               {pending ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
-                <RefreshCw className="h-3.5 w-3.5" />
+                <Play className="h-3.5 w-3.5" />
               )}
-              Refresh
+              Run check
             </Button>
           </div>
         </div>
@@ -223,37 +236,33 @@ export function AiCitationsPanel({
           </p>
         )}
 
-        {domain && !bundle && (
+        {statusMsg && (
+          <div className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            {statusMsg}
+          </div>
+        )}
+
+        {domain && !bundle && !statusMsg && (
           <p className="rounded-md border border-dashed py-8 text-center text-sm text-muted-foreground">
-            No AI citation probes yet for <span className="font-medium">{domain}</span>.
+            No AI citation data yet for <span className="font-medium">{domain}</span>.
             <br />
-            Click <span className="font-medium">Run GEO check</span> at the top to run
-            probes across OpenAI, Anthropic, and Google models.
+            Click <span className="font-medium">Run check</span> to fetch citations from
+            ChatGPT, Gemini, Perplexity, Copilot, and Google AI Overviews in a single
+            Apify call.
           </p>
         )}
 
-        {bundle && <CitationsBody bundle={bundle} status={status} />}
+        {bundle && <CitationsBody bundle={bundle} />}
       </CardContent>
     </Card>
   );
 }
 
 // ---------------------------------------------------------------------------
-function CitationsBody({
-  bundle,
-  status,
-}: {
-  bundle: AiCitationsBundle;
-  status: ProviderStatus | null;
-}) {
+function CitationsBody({ bundle }: { bundle: AiCitationsBundle }) {
   const hero: PlatformKey[] = ["aiOverviews", "chatgpt"];
   const tableRows: PlatformKey[] = ["gemini", "perplexity", "copilot", "grok"];
-
-  function hint(k: PlatformKey): string | undefined {
-    if (!status) return undefined;
-    if (status.configured.includes(k)) return undefined;
-    return status.hints[k];
-  }
 
   return (
     <div className="space-y-5">
@@ -264,16 +273,14 @@ function CitationsBody({
             platformKey={k}
             current={bundle.current[k]}
             previous={bundle.previous[k]}
-            hint={hint(k)}
           />
         ))}
       </div>
 
       <div className="rounded-md border">
-        <div className="grid grid-cols-[1fr_auto_auto] gap-3 border-b px-3 py-2 text-[11px] uppercase tracking-wider text-muted-foreground">
+        <div className="grid grid-cols-[1fr_auto] gap-3 border-b px-3 py-2 text-[11px] uppercase tracking-wider text-muted-foreground">
           <span>Platform</span>
           <span className="text-right">Citations</span>
-          <span className="text-right">Pages</span>
         </div>
         {tableRows.map((k) => (
           <PlatformRow
@@ -281,13 +288,12 @@ function CitationsBody({
             platformKey={k}
             current={bundle.current[k]}
             previous={bundle.previous[k]}
-            hint={hint(k)}
           />
         ))}
       </div>
 
       <div className="text-[10px] text-muted-foreground">
-        Domain <span className="font-medium">{bundle.domain}</span> · Last probe{" "}
+        Domain <span className="font-medium">{bundle.domain}</span> · Updated{" "}
         {new Date(bundle.fetchedAt).toLocaleString()}
       </div>
     </div>
@@ -299,25 +305,17 @@ function HeroCard({
   platformKey,
   current,
   previous,
-  hint,
 }: {
   platformKey: PlatformKey;
   current?: PlatformCounts;
   previous?: PlatformCounts;
-  hint?: string;
 }) {
   const meta = PLATFORMS.find((p) => p.key === platformKey);
-  const { citationsDelta, pagesDelta } = delta(current, previous);
-  const empty = !current || current.citations === 0;
+  const { citationsDelta } = delta(current, previous);
   return (
     <div>
       <div className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
         <span>{meta?.label}</span>
-        {hint && (
-          <span className="inline-flex" title={hint}>
-            <Info className="h-3 w-3 text-muted-foreground/60" />
-          </span>
-        )}
       </div>
       <div className="mt-1 flex items-center gap-2">
         <PlatformIcon k={platformKey} className="h-6 w-6" />
@@ -330,22 +328,6 @@ function HeroCard({
           </span>
         )}
       </div>
-      <div className="mt-1 flex items-center gap-2 text-sm">
-        <span className="text-muted-foreground">Pages</span>
-        <span className="font-medium tabular-nums text-sky-400">
-          {fmtCount(current?.pages)}
-        </span>
-        {pagesDelta !== null && pagesDelta !== 0 && (
-          <span className={cn("text-xs tabular-nums", deltaClass(pagesDelta))}>
-            {formatDelta(pagesDelta)}
-          </span>
-        )}
-      </div>
-      {empty && hint && (
-        <p className="mt-1 text-[10px] leading-snug text-muted-foreground/80">
-          {hint}
-        </p>
-      )}
     </div>
   );
 }
@@ -355,45 +337,24 @@ function PlatformRow({
   platformKey,
   current,
   previous,
-  hint,
 }: {
   platformKey: PlatformKey;
   current?: PlatformCounts;
   previous?: PlatformCounts;
-  hint?: string;
 }) {
   const meta = PLATFORMS.find((p) => p.key === platformKey);
-  const { citationsDelta, pagesDelta } = delta(current, previous);
-  const empty = !current || current.citations === 0;
+  const { citationsDelta } = delta(current, previous);
   return (
-    <div className="grid grid-cols-[1fr_auto_auto] gap-3 border-b px-3 py-2 text-sm last:border-b-0">
+    <div className="grid grid-cols-[1fr_auto] gap-3 border-b px-3 py-2 text-sm last:border-b-0">
       <div className="flex items-center gap-2">
         <PlatformIcon k={platformKey} />
-        <span className="flex items-center gap-1.5">
-          {meta?.label}
-          {empty && hint && (
-            <span
-              className="inline-flex text-muted-foreground/70"
-              title={hint}
-            >
-              <Info className="h-3 w-3" />
-            </span>
-          )}
-        </span>
+        <span>{meta?.label}</span>
       </div>
       <div className="flex items-center justify-end gap-2 tabular-nums">
         <span className="text-sky-400">{fmtCount(current?.citations)}</span>
         {citationsDelta !== null && citationsDelta !== 0 && (
           <span className={cn("text-xs", deltaClass(citationsDelta))}>
             {formatDelta(citationsDelta)}
-          </span>
-        )}
-      </div>
-      <div className="flex items-center justify-end gap-2 tabular-nums">
-        <span className="text-sky-400">{fmtCount(current?.pages)}</span>
-        {pagesDelta !== null && pagesDelta !== 0 && (
-          <span className={cn("text-xs", deltaClass(pagesDelta))}>
-            {formatDelta(pagesDelta)}
           </span>
         )}
       </div>

@@ -27,13 +27,40 @@ import type {
 
 // --------------------------------------------------------------------------
 // 1) AI Visibility — Apify (async, may return pending)
+//
+// The actor requires a `keyword` (brand or topic). Accept either explicit
+// `keyword` or a legacy `domain` arg — when only `domain` is passed we
+// extract the root subdomain as the brand name (github.com → github).
 // --------------------------------------------------------------------------
+function brandFromDomain(input: string): string {
+  const s = input
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .split("/")[0];
+  if (!s) return "";
+  const root = s.split(".")[0];
+  return root.charAt(0).toUpperCase() + root.slice(1);
+}
+
 export async function runAiVisibilityAction(args: {
-  domain: string;
+  /** Preferred: brand or keyword to track. */
+  keyword?: string;
+  /** Legacy: domain — we'll derive a brand from it. */
+  domain?: string;
   country?: string;
 }): Promise<CachedToolResult<AiVisibilityResult>> {
   const { workspace } = await requireWorkspace();
-  const res = await runAiVisibility({ workspaceId: workspace.id, ...args });
+  const keyword = (args.keyword ?? brandFromDomain(args.domain ?? "")).trim();
+  if (!keyword) {
+    return { ok: false, error: "Enter a brand name or keyword." };
+  }
+  const res = await runAiVisibility({
+    workspaceId: workspace.id,
+    keyword,
+    country: args.country,
+  });
   if ("ok" in res && res.ok && !("pending" in res)) revalidatePath("/agents/geo");
   return res;
 }
