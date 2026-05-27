@@ -1,40 +1,32 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import type { Prisma } from "@prisma/client";
 import { prisma } from "@/backend/db";
 import { requireWorkspace } from "@/backend/workspace";
-import {
-  startAiVisibility,
-  getActorRunStatus,
-  getDatasetItems,
-  isTerminalApifyStatus,
-  normalizeAiVisibility,
-} from "@/backend/ahrefs-tools";
-import { ApifyNotConfiguredError, ApifyAhrefsError } from "@/backend/ahrefs";
 import type {
   AiCitationsActionResult,
   AiCitationsBundle,
-  AiCitationsPollResult,
   PlatformCounts,
   PlatformKey,
 } from "./ai-citations-types";
 
 // ---------------------------------------------------------------------------
-// Provider-alias mapping. Apify actors return all kinds of names — normalize.
+// Data source: the existing `GeoQuery` LLM-probe table.
+//
+// The radeance/ahrefs-scraper Apify actor doesn't return AI-visibility data
+// despite the include_ai_visibility flag — it only returns traffic /
+// authority / backlinks. So the AI citations panel sources from the LLM
+// probes you already have configured (OpenAI / Anthropic / Google). Each
+// probe is a (provider, prompt, cited) row that we bucket by platform.
+//
+// Counts:
+//   citations = # of probes with cited=true in the window.
+//   pages     = # of distinct prompts cited (proxy for unique cited pages).
+//
+// Delta: current 30-day window vs the previous 30-day window.
 // ---------------------------------------------------------------------------
-function mapProvider(name: string): PlatformKey | null {
-  const s = name.toLowerCase().replace(/[^a-z0-9]/g, "");
-  if (!s) return null;
-  if (s.includes("aioverview") || s === "google" || s.includes("googleaio") || s === "aio" || s === "sge")
-    return "aiOverviews";
-  if (s.includes("chatgpt") || s === "gpt" || s.includes("openai")) return "chatgpt";
-  if (s.includes("gemini") || s === "bard") return "gemini";
-  if (s.includes("perplexity") || s === "pplx") return "perplexity";
-  if (s.includes("copilot") || s.includes("bingchat") || s === "bing") return "copilot";
-  if (s.includes("grok") || s === "xai") return "grok";
-  return null;
-}
+
+const WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 function normalizeDomain(input: string): string {
   let s = input.trim().toLowerCase();
@@ -44,100 +36,112 @@ function normalizeDomain(input: string): string {
   return s;
 }
 
-function errorMessage(err: unknown): string {
-  if (err instanceof ApifyNotConfiguredError) {
-    return "Apify token isn't configured. Set APIFY_SEO_TOKEN (or APIFY_TOKEN) in Render → Environment.";
-  }
-  if (err instanceof ApifyAhrefsError) return err.message;
-  if (err instanceof Error) return err.message;
-  return String(err);
+/**
+ * Map a model/provider string (e.g. "gemini-1.5-flash", "claude-haiku-4-5",
+ * "gpt-4o-mini") to the reference platform key. We follow the reference
+ * layout's 6 tiles — Claude responses are folded into the ChatGPT tile
+ * because Claude has no dedicated tile in the design.
+ */
+function mapProvider(name: string): PlatformKey | null {
+  const s = name.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (!s) return null;
+  // Google AI Overviews / SGE
+  if (s.includes("aioverview") || s.includes("googleaio") || s === "aio" || s === "sge")
+    return "aiOverviews";
+  // Gemini / Bard / Google models
+  if (s.includes("gemini") || s.includes("bard") || s.startsWith("googleai"))
+    return "gemini";
+  // ChatGPT / OpenAI / GPT family
+  if (
+    s.includes("chatgpt") ||
+    s.includes("openai") ||
+    s.startsWith("gpt") ||
+    s.startsWith("o1") ||
+    s.startsWith("o3") ||
+    s.startsWith("o4") ||
+    s.includes("davinci")
+  )
+    return "chatgpt";
+  // Claude / Anthropic — fold into ChatGPT tile per the reference layout.
+  if (
+    s.includes("claude") ||
+    s.includes("anthropic") ||
+    s.includes("haiku") ||
+    s.includes("sonnet") ||
+    s.includes("opus")
+  )
+    return "chatgpt";
+  // Perplexity
+  if (s.includes("perplexity") || s === "pplx") return "perplexity";
+  // Microsoft Copilot / Bing Chat
+  if (s.includes("copilot") || s.includes("bingchat") || s === "bing")
+    return "copilot";
+  // xAI Grok
+  if (s.includes("grok") || s === "xai") return "grok";
+  return null;
 }
 
-// ---------------------------------------------------------------------------
-// DB helpers
-// ---------------------------------------------------------------------------
+type ProbeRow = { provider: string; cited: boolean; prompt: string; checkedAt: Date };
 
-async function loadLatestSnapshots(workspaceId: string, domain: string, limit = 2) {
-  try {
-    return await prisma.aiCitationSnapshot.findMany({
-      where: { workspaceId, domain },
-      orderBy: { fetchedAt: "desc" },
-      take: limit,
-    });
-  } catch (err) {
-    const code = (err as { code?: string })?.code;
-    if (code === "P2021" || code === "P2022") return [];
-    throw err;
-  }
-}
-
-function snapshotData(snap: { data: unknown }): Partial<Record<PlatformKey, PlatformCounts>> {
-  return (snap.data as Partial<Record<PlatformKey, PlatformCounts>>) ?? {};
-}
-
-async function saveSnapshot(args: {
-  workspaceId: string;
-  domain: string;
-  country: string;
-  data: Partial<Record<PlatformKey, PlatformCounts>>;
-  raw: unknown;
-}) {
-  try {
-    return await prisma.aiCitationSnapshot.create({
-      data: {
-        workspaceId: args.workspaceId,
-        domain: args.domain,
-        country: args.country,
-        data: JSON.parse(JSON.stringify(args.data)) as Prisma.InputJsonValue,
-        raw: JSON.parse(JSON.stringify(args.raw ?? null)) as Prisma.InputJsonValue,
-      },
-    });
-  } catch (err) {
-    const code = (err as { code?: string })?.code;
-    if (code === "P2021" || code === "P2022") {
-      console.warn("[ai-citations] table missing — run prisma db push");
-      return null;
+function aggregate(probes: ProbeRow[], windowStart: number, windowEnd: number) {
+  const byPlatform = new Map<
+    PlatformKey,
+    { citations: number; prompts: Set<string> }
+  >();
+  for (const p of probes) {
+    if (!p.cited) continue;
+    const t = p.checkedAt.getTime();
+    if (t < windowStart || t >= windowEnd) continue;
+    const platform = mapProvider(p.provider);
+    if (!platform) continue;
+    if (!byPlatform.has(platform)) {
+      byPlatform.set(platform, { citations: 0, prompts: new Set() });
     }
-    throw err;
+    const entry = byPlatform.get(platform)!;
+    entry.citations++;
+    entry.prompts.add(p.prompt.trim().toLowerCase());
   }
-}
-
-function bundleFromSnapshots(
-  domain: string,
-  country: string,
-  snaps: Array<{ fetchedAt: Date; data: unknown }>
-): AiCitationsBundle | null {
-  if (snaps.length === 0) return null;
-  const [latest, prev] = snaps;
-  return {
-    domain,
-    country,
-    fetchedAt: latest.fetchedAt.toISOString(),
-    previousAt: prev ? prev.fetchedAt.toISOString() : null,
-    current: snapshotData(latest),
-    previous: prev ? snapshotData(prev) : {},
-  };
-}
-
-function rawToPlatformCounts(
-  rawProviders: Array<{ provider: string; citations: number | null; pages: number | null; mentions: number | null }>
-): Partial<Record<PlatformKey, PlatformCounts>> {
   const out: Partial<Record<PlatformKey, PlatformCounts>> = {};
-  for (const row of rawProviders) {
-    const key = mapProvider(row.provider);
-    if (!key) {
-      console.warn(`[ai-citations] Unrecognized provider "${row.provider}" — adjust mapProvider() alias table.`);
-      continue;
-    }
-    const citations = row.citations ?? row.mentions ?? 0;
-    const pages = row.pages ?? 0;
-    out[key] = { citations, pages };
+  for (const [k, v] of byPlatform.entries()) {
+    out[k] = { citations: v.citations, pages: v.prompts.size };
   }
   return out;
 }
 
+async function buildBundle(
+  workspaceId: string,
+  domain: string
+): Promise<AiCitationsBundle | null> {
+  const now = Date.now();
+  const cutoffPrior = new Date(now - 2 * WINDOW_MS);
+
+  const probes: ProbeRow[] = await prisma.geoQuery.findMany({
+    where: { workspaceId, checkedAt: { gte: cutoffPrior } },
+    select: { provider: true, cited: true, prompt: true, checkedAt: true },
+  });
+  if (probes.length === 0) return null;
+
+  const current = aggregate(probes, now - WINDOW_MS, now);
+  const previous = aggregate(probes, now - 2 * WINDOW_MS, now - WINDOW_MS);
+
+  // Find the most recent probe checkedAt as the bundle timestamp.
+  const latestTs = probes.reduce(
+    (acc, p) => Math.max(acc, p.checkedAt.getTime()),
+    0
+  );
+
+  return {
+    domain,
+    country: "us",
+    fetchedAt: new Date(latestTs).toISOString(),
+    previousAt: new Date(now - WINDOW_MS).toISOString(),
+    current,
+    previous,
+  };
+}
+
 // ---------------------------------------------------------------------------
-// Initial loader — fetches the latest cached bundle, no Apify call.
+// Public actions
 // ---------------------------------------------------------------------------
 
 export async function loadAiCitationsAction(args?: {
@@ -146,119 +150,21 @@ export async function loadAiCitationsAction(args?: {
   const { workspace } = await requireWorkspace();
   const domain = normalizeDomain(args?.domain ?? workspace.websiteUrl ?? "");
   if (!domain) return { ok: true, data: null };
-  const snaps = await loadLatestSnapshots(workspace.id, domain, 2);
-  return { ok: true, data: bundleFromSnapshots(domain, "us", snaps) };
+  return { ok: true, data: await buildBundle(workspace.id, domain) };
 }
 
 /**
- * Returns the raw Apify dataset from the latest snapshot — used by the
- * panel's "View raw response" debug expander when no platforms get
- * parsed, so the user can paste it back to us for field-mapping fixes.
+ * Refresh = re-aggregate from the GeoQuery table. No Apify / LLM calls are
+ * made here — the panel re-uses whatever probes the GEO agent (the
+ * "Run GEO check" button at the top of the page) already produced.
  */
-export async function getLatestRawSnapshotAction(args?: {
+export async function refreshAiCitationsAction(args?: {
   domain?: string;
-}): Promise<{ ok: true; raw: unknown; fetchedAt: string } | { ok: false; error: string }> {
-  const { workspace } = await requireWorkspace();
-  const domain = normalizeDomain(args?.domain ?? workspace.websiteUrl ?? "");
-  if (!domain) return { ok: false, error: "No domain configured." };
-  try {
-    const row = await prisma.aiCitationSnapshot.findFirst({
-      where: { workspaceId: workspace.id, domain },
-      orderBy: { fetchedAt: "desc" },
-    });
-    if (!row) return { ok: false, error: "No snapshot yet — run a check first." };
-    return { ok: true, raw: row.raw, fetchedAt: row.fetchedAt.toISOString() };
-  } catch (err) {
-    const code = (err as { code?: string })?.code;
-    if (code === "P2021" || code === "P2022") {
-      return { ok: false, error: "AiCitationSnapshot table missing — run prisma db push." };
-    }
-    return { ok: false, error: (err as Error).message };
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Refresh — start Apify run, return pending handle for client to poll.
-// ---------------------------------------------------------------------------
-
-export async function startAiCitationsRefreshAction(args: {
-  domain?: string;
-  country?: string;
 }): Promise<AiCitationsActionResult> {
   const { workspace } = await requireWorkspace();
-  const domain = normalizeDomain(args.domain ?? workspace.websiteUrl ?? "");
-  const country = (args.country ?? "us").toLowerCase();
-  if (!domain) return { ok: false, error: "Set your website URL in Settings first." };
-  try {
-    const handle = await startAiVisibility(domain, country);
-    return { ok: true, pending: true, runId: handle.runId, datasetId: handle.datasetId };
-  } catch (err) {
-    return { ok: false, error: errorMessage(err) };
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Poll — called repeatedly by the client until status === DONE.
-// ---------------------------------------------------------------------------
-
-export async function pollAiCitationsAction(args: {
-  domain: string;
-  country: string;
-  runId: string;
-  datasetId: string;
-}): Promise<AiCitationsPollResult> {
-  const { workspace } = await requireWorkspace();
-  const domain = normalizeDomain(args.domain);
-  const country = (args.country ?? "us").toLowerCase();
-
-  let status: { status: string; statusMessage?: string; datasetId?: string };
-  try {
-    status = await getActorRunStatus(args.runId);
-  } catch (err) {
-    return { ok: false, error: errorMessage(err) };
-  }
-
-  if (!isTerminalApifyStatus(status.status)) {
-    return { ok: true, status: "RUNNING", statusMessage: status.statusMessage };
-  }
-  if (status.status !== "SUCCEEDED") {
-    return {
-      ok: false,
-      error: `Apify run ${status.status}${status.statusMessage ? ` — ${status.statusMessage}` : ""}`,
-    };
-  }
-
-  let items: unknown[];
-  try {
-    items = await getDatasetItems(status.datasetId ?? args.datasetId);
-  } catch (err) {
-    return { ok: false, error: errorMessage(err) };
-  }
-  const av = normalizeAiVisibility(items, { domain });
-  const platformCounts = rawToPlatformCounts(av.byProvider);
-
-  // Persist; this becomes the "current" for delta math next time.
-  await saveSnapshot({
-    workspaceId: workspace.id,
-    domain,
-    country,
-    data: platformCounts,
-    raw: items,
-  });
-
-  // Reload latest 2 to build the bundle (includes the just-inserted row).
-  const snaps = await loadLatestSnapshots(workspace.id, domain, 2);
-  const bundle =
-    bundleFromSnapshots(domain, country, snaps) ??
-    {
-      domain,
-      country,
-      fetchedAt: new Date().toISOString(),
-      previousAt: null,
-      current: platformCounts,
-      previous: {},
-    };
-
+  const domain = normalizeDomain(args?.domain ?? workspace.websiteUrl ?? "");
+  if (!domain) return { ok: true, data: null };
+  const data = await buildBundle(workspace.id, domain);
   revalidatePath("/agents/geo");
-  return { ok: true, status: "DONE", data: bundle };
+  return { ok: true, data };
 }

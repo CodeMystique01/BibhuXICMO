@@ -33,34 +33,94 @@ function normalizeDomain(input: string | null | undefined): string {
     .split("/")[0];
 }
 
+const CITATIONS_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+function mapProviderToPlatform(name: string): PlatformKey | null {
+  const s = name.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (!s) return null;
+  if (s.includes("aioverview") || s.includes("googleaio") || s === "aio" || s === "sge")
+    return "aiOverviews";
+  if (s.includes("gemini") || s.includes("bard") || s.startsWith("googleai"))
+    return "gemini";
+  if (
+    s.includes("chatgpt") ||
+    s.includes("openai") ||
+    s.startsWith("gpt") ||
+    s.startsWith("o1") ||
+    s.startsWith("o3") ||
+    s.startsWith("o4") ||
+    s.includes("davinci")
+  )
+    return "chatgpt";
+  if (
+    s.includes("claude") ||
+    s.includes("anthropic") ||
+    s.includes("haiku") ||
+    s.includes("sonnet") ||
+    s.includes("opus")
+  )
+    return "chatgpt";
+  if (s.includes("perplexity") || s === "pplx") return "perplexity";
+  if (s.includes("copilot") || s.includes("bingchat") || s === "bing") return "copilot";
+  if (s.includes("grok") || s === "xai") return "grok";
+  return null;
+}
+
+function aggregateProbes(
+  probes: Array<{ provider: string; cited: boolean; prompt: string; checkedAt: Date }>,
+  windowStart: number,
+  windowEnd: number
+): Partial<Record<PlatformKey, PlatformCounts>> {
+  const byPlatform = new Map<PlatformKey, { citations: number; prompts: Set<string> }>();
+  for (const p of probes) {
+    if (!p.cited) continue;
+    const t = p.checkedAt.getTime();
+    if (t < windowStart || t >= windowEnd) continue;
+    const platform = mapProviderToPlatform(p.provider);
+    if (!platform) continue;
+    if (!byPlatform.has(platform)) {
+      byPlatform.set(platform, { citations: 0, prompts: new Set() });
+    }
+    const entry = byPlatform.get(platform)!;
+    entry.citations++;
+    entry.prompts.add(p.prompt.trim().toLowerCase());
+  }
+  const out: Partial<Record<PlatformKey, PlatformCounts>> = {};
+  for (const [k, v] of byPlatform.entries()) {
+    out[k] = { citations: v.citations, pages: v.prompts.size };
+  }
+  return out;
+}
+
 async function loadInitialBundle(
   workspaceId: string,
   domain: string
 ): Promise<AiCitationsBundle | null> {
   if (!domain) return null;
-  try {
-    const snaps = await prisma.aiCitationSnapshot.findMany({
-      where: { workspaceId, domain },
-      orderBy: { fetchedAt: "desc" },
-      take: 2,
-    });
-    if (snaps.length === 0) return null;
-    const [latest, prev] = snaps;
-    return {
-      domain,
-      country: latest.country,
-      fetchedAt: latest.fetchedAt.toISOString(),
-      previousAt: prev?.fetchedAt.toISOString() ?? null,
-      current: (latest.data as Partial<Record<PlatformKey, PlatformCounts>>) ?? {},
-      previous: prev
-        ? (prev.data as Partial<Record<PlatformKey, PlatformCounts>>) ?? {}
-        : {},
-    };
-  } catch (err) {
-    const code = (err as { code?: string })?.code;
-    if (code === "P2021" || code === "P2022") return null;
-    throw err;
-  }
+  const now = Date.now();
+  const probes = await prisma.geoQuery.findMany({
+    where: {
+      workspaceId,
+      checkedAt: { gte: new Date(now - 2 * CITATIONS_WINDOW_MS) },
+    },
+    select: { provider: true, cited: true, prompt: true, checkedAt: true },
+  });
+  if (probes.length === 0) return null;
+  const current = aggregateProbes(probes, now - CITATIONS_WINDOW_MS, now);
+  const previous = aggregateProbes(
+    probes,
+    now - 2 * CITATIONS_WINDOW_MS,
+    now - CITATIONS_WINDOW_MS
+  );
+  const latestTs = probes.reduce((a, p) => Math.max(a, p.checkedAt.getTime()), 0);
+  return {
+    domain,
+    country: "us",
+    fetchedAt: new Date(latestTs).toISOString(),
+    previousAt: new Date(now - CITATIONS_WINDOW_MS).toISOString(),
+    current,
+    previous,
+  };
 }
 
 export default async function GeoAgentPage() {

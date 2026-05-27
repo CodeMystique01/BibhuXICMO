@@ -43,10 +43,4 @@ export type AiCitationsBundle = {
 
 export type AiCitationsActionResult =
   | { ok: true; data: AiCitationsBundle | null }
-  | { ok: true; pending: true; runId: string; datasetId: string }
-  | { ok: false; error: string };
-
-export type AiCitationsPollResult =
-  | { ok: true; status: "RUNNING"; statusMessage?: string }
-  | { ok: true; status: "DONE"; data: AiCitationsBundle }
   | { ok: false; error: string };
