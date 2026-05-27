@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { Info, Loader2, RefreshCw, Sparkles } from "lucide-react";
+import { useEffect, useState, useTransition } from "react";
+import { Info, Loader2, RefreshCw, Sparkles, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/frontend/components/ui/button";
 import {
@@ -11,7 +11,12 @@ import {
   CardTitle,
 } from "@/frontend/components/ui/card";
 import { cn } from "@/shared/utils";
-import { refreshAiCitationsAction } from "./ai-citations-actions";
+import {
+  backfillAiOverviewsAction,
+  getProviderStatusAction,
+  refreshAiCitationsAction,
+  type ProviderStatus,
+} from "./ai-citations-actions";
 import {
   PLATFORMS,
   type AiCitationsBundle,
@@ -100,7 +105,13 @@ export function AiCitationsPanel({
   domain: string;
 }) {
   const [bundle, setBundle] = useState<AiCitationsBundle | null>(initial);
+  const [status, setStatus] = useState<ProviderStatus | null>(null);
   const [pending, startTransition] = useTransition();
+  const [backfilling, startBackfill] = useTransition();
+
+  useEffect(() => {
+    getProviderStatusAction().then(setStatus).catch(() => undefined);
+  }, []);
 
   function refresh() {
     if (!domain) {
@@ -122,6 +133,34 @@ export function AiCitationsPanel({
     });
   }
 
+  function probeAiOverviewsNow() {
+    if (!domain) {
+      toast.error("Set your website URL in Settings first.");
+      return;
+    }
+    startBackfill(async () => {
+      const res = await backfillAiOverviewsAction({ domain });
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
+      if (res.probed === 0) {
+        toast.warning(
+          "No prompts to probe yet — click 'Run GEO check' first so we know what queries to look up."
+        );
+        return;
+      }
+      // Reload aggregation so the AI Overviews tile updates.
+      const refreshed = await refreshAiCitationsAction({ domain });
+      if (refreshed.ok) setBundle(refreshed.data);
+      toast.success(
+        `Probed ${res.probed} prompts via Google SERP — ${res.hadOverview} had an AI Overview, ${res.cited} cited ${domain}.`
+      );
+    });
+  }
+
+  const aioConfigured = !!status?.configured.includes("aiOverviews");
+
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -131,29 +170,50 @@ export function AiCitationsPanel({
               AI citations
               <span
                 className="inline-flex"
-                title="Citations come from your GEO LLM probes (OpenAI, Anthropic, Google). Click 'Run GEO check' at the top to add fresh probes — refreshing this panel just re-aggregates existing data, no API calls."
+                title="Citations come from your GEO LLM probes (OpenAI, Anthropic, Google) plus an Apify Google SERP probe for AI Overviews. Refreshing this panel re-aggregates existing data; the 'Probe AI Overviews' button fetches fresh AIO data via Apify."
               >
                 <Info className="h-3 w-3 text-muted-foreground" />
               </span>
             </CardTitle>
             <p className="text-xs text-muted-foreground">
-              From LLM probes over the last 30 days · Δ vs the prior 30-day window.
+              From LLM probes (last 30 days) · Δ vs prior 30-day window.
             </p>
           </div>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={refresh}
-            disabled={pending || !domain}
-            className="gap-1.5"
-          >
-            {pending ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <RefreshCw className="h-3.5 w-3.5" />
-            )}
-            Refresh
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={probeAiOverviewsNow}
+              disabled={backfilling || pending || !domain || !aioConfigured}
+              className="gap-1.5"
+              title={
+                aioConfigured
+                  ? "Probe AI Overviews via Apify Google SERP for your existing prompts (no new prompts generated)."
+                  : "Set APIFY_SEO_TOKEN or APIFY_TOKEN to enable."
+              }
+            >
+              {backfilling ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Zap className="h-3.5 w-3.5" />
+              )}
+              Probe AI Overviews
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={refresh}
+              disabled={pending || !domain}
+              className="gap-1.5"
+            >
+              {pending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5" />
+              )}
+              Refresh
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -172,16 +232,28 @@ export function AiCitationsPanel({
           </p>
         )}
 
-        {bundle && <CitationsBody bundle={bundle} />}
+        {bundle && <CitationsBody bundle={bundle} status={status} />}
       </CardContent>
     </Card>
   );
 }
 
 // ---------------------------------------------------------------------------
-function CitationsBody({ bundle }: { bundle: AiCitationsBundle }) {
+function CitationsBody({
+  bundle,
+  status,
+}: {
+  bundle: AiCitationsBundle;
+  status: ProviderStatus | null;
+}) {
   const hero: PlatformKey[] = ["aiOverviews", "chatgpt"];
   const tableRows: PlatformKey[] = ["gemini", "perplexity", "copilot", "grok"];
+
+  function hint(k: PlatformKey): string | undefined {
+    if (!status) return undefined;
+    if (status.configured.includes(k)) return undefined;
+    return status.hints[k];
+  }
 
   return (
     <div className="space-y-5">
@@ -192,6 +264,7 @@ function CitationsBody({ bundle }: { bundle: AiCitationsBundle }) {
             platformKey={k}
             current={bundle.current[k]}
             previous={bundle.previous[k]}
+            hint={hint(k)}
           />
         ))}
       </div>
@@ -208,6 +281,7 @@ function CitationsBody({ bundle }: { bundle: AiCitationsBundle }) {
             platformKey={k}
             current={bundle.current[k]}
             previous={bundle.previous[k]}
+            hint={hint(k)}
           />
         ))}
       </div>
@@ -225,16 +299,26 @@ function HeroCard({
   platformKey,
   current,
   previous,
+  hint,
 }: {
   platformKey: PlatformKey;
   current?: PlatformCounts;
   previous?: PlatformCounts;
+  hint?: string;
 }) {
   const meta = PLATFORMS.find((p) => p.key === platformKey);
   const { citationsDelta, pagesDelta } = delta(current, previous);
+  const empty = !current || current.citations === 0;
   return (
     <div>
-      <div className="text-sm font-medium text-muted-foreground">{meta?.label}</div>
+      <div className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
+        <span>{meta?.label}</span>
+        {hint && (
+          <span className="inline-flex" title={hint}>
+            <Info className="h-3 w-3 text-muted-foreground/60" />
+          </span>
+        )}
+      </div>
       <div className="mt-1 flex items-center gap-2">
         <PlatformIcon k={platformKey} className="h-6 w-6" />
         <span className="text-4xl font-semibold tabular-nums text-sky-400">
@@ -257,6 +341,11 @@ function HeroCard({
           </span>
         )}
       </div>
+      {empty && hint && (
+        <p className="mt-1 text-[10px] leading-snug text-muted-foreground/80">
+          {hint}
+        </p>
+      )}
     </div>
   );
 }
@@ -266,18 +355,31 @@ function PlatformRow({
   platformKey,
   current,
   previous,
+  hint,
 }: {
   platformKey: PlatformKey;
   current?: PlatformCounts;
   previous?: PlatformCounts;
+  hint?: string;
 }) {
   const meta = PLATFORMS.find((p) => p.key === platformKey);
   const { citationsDelta, pagesDelta } = delta(current, previous);
+  const empty = !current || current.citations === 0;
   return (
     <div className="grid grid-cols-[1fr_auto_auto] gap-3 border-b px-3 py-2 text-sm last:border-b-0">
       <div className="flex items-center gap-2">
         <PlatformIcon k={platformKey} />
-        <span>{meta?.label}</span>
+        <span className="flex items-center gap-1.5">
+          {meta?.label}
+          {empty && hint && (
+            <span
+              className="inline-flex text-muted-foreground/70"
+              title={hint}
+            >
+              <Info className="h-3 w-3" />
+            </span>
+          )}
+        </span>
       </div>
       <div className="flex items-center justify-end gap-2 tabular-nums">
         <span className="text-sky-400">{fmtCount(current?.citations)}</span>

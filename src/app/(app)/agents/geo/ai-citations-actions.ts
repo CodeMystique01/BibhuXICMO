@@ -3,6 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/backend/db";
 import { requireWorkspace } from "@/backend/workspace";
+import { probeAiOverview } from "@/backend/agents/geo-aio-probe";
+import { hasSeoApifyToken } from "@/backend/ahrefs-tools";
+import { isLikelyValidKey } from "@/backend/llm";
+import { env } from "@/shared/env";
 import type {
   AiCitationsActionResult,
   AiCitationsBundle,
@@ -167,4 +171,143 @@ export async function refreshAiCitationsAction(args?: {
   const data = await buildBundle(workspace.id, domain);
   revalidatePath("/agents/geo");
   return { ok: true, data };
+}
+
+// ---------------------------------------------------------------------------
+// Provider status — which platforms can we probe given the current env?
+// The panel shows a friendly hint on tiles whose backing key isn't set.
+// ---------------------------------------------------------------------------
+
+export type ProviderStatus = {
+  /** Tile keys keyed by their reason for being empty. */
+  configured: PlatformKey[];
+  /** Per-platform missing-key hint. */
+  hints: Partial<Record<PlatformKey, string>>;
+};
+
+export async function getProviderStatusAction(): Promise<ProviderStatus> {
+  const configured: PlatformKey[] = [];
+  const hints: Partial<Record<PlatformKey, string>> = {};
+
+  // AI Overviews — uses Apify SERP scraper.
+  if (hasSeoApifyToken()) {
+    configured.push("aiOverviews");
+  } else {
+    hints.aiOverviews = "Set APIFY_SEO_TOKEN (or APIFY_TOKEN) to enable AI Overviews probing.";
+  }
+
+  // ChatGPT — OpenAI key OR Anthropic Claude (folded into this tile).
+  if (
+    isLikelyValidKey(env.OPENAI_API_KEY) ||
+    isLikelyValidKey(env.ANTHROPIC_API_KEY)
+  ) {
+    configured.push("chatgpt");
+  } else {
+    hints.chatgpt = "Set OPENAI_API_KEY or ANTHROPIC_API_KEY to probe ChatGPT-style models.";
+  }
+
+  // Gemini — Google API key.
+  if (isLikelyValidKey(env.GOOGLE_GEMINI_API_KEY)) {
+    configured.push("gemini");
+  } else {
+    hints.gemini = "Set GOOGLE_GEMINI_API_KEY to probe Gemini.";
+  }
+
+  // Perplexity — its own key.
+  if (isLikelyValidKey(env.PERPLEXITY_API_KEY)) {
+    configured.push("perplexity");
+  } else {
+    hints.perplexity = "Set PERPLEXITY_API_KEY to probe Perplexity.";
+  }
+
+  // Copilot — no public API yet; we'd need a Bing scraper for parity.
+  hints.copilot = "Copilot has no public probe API. Coming soon via Bing SERP scraper.";
+
+  // Grok — xAI key, not wired yet.
+  hints.grok = "Grok requires an xAI API key (XAI_API_KEY). Coming soon.";
+
+  return { configured, hints };
+}
+
+// ---------------------------------------------------------------------------
+// Backfill: run AI Overviews probe for the prompts already in `GeoQuery`.
+// Lets the user populate the AI Overviews tile immediately without
+// triggering a full GEO agent re-run.
+// ---------------------------------------------------------------------------
+
+export type BackfillResult =
+  | { ok: true; probed: number; cited: number; hadOverview: number }
+  | { ok: false; error: string };
+
+export async function backfillAiOverviewsAction(args?: {
+  domain?: string;
+  limit?: number;
+}): Promise<BackfillResult> {
+  if (!hasSeoApifyToken()) {
+    return {
+      ok: false,
+      error: "Apify token not configured. Set APIFY_SEO_TOKEN or APIFY_TOKEN.",
+    };
+  }
+  const { workspace } = await requireWorkspace();
+  const domain = normalizeDomain(args?.domain ?? workspace.websiteUrl ?? "");
+  if (!domain) {
+    return { ok: false, error: "Workspace has no website URL set." };
+  }
+
+  // Pull distinct prompts from recent GeoQuery rows (last 60 days). Cap so
+  // a backfill never balloons Apify usage — at default 8 prompts × ~$0.0015
+  // per Google search this run costs roughly $0.012.
+  const lookback = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
+  const rows = await prisma.geoQuery.findMany({
+    where: { workspaceId: workspace.id, checkedAt: { gte: lookback } },
+    select: { prompt: true },
+    orderBy: { checkedAt: "desc" },
+    take: 200,
+  });
+  const seen = new Set<string>();
+  const prompts: string[] = [];
+  const limit = Math.min(Math.max(args?.limit ?? 8, 1), 20);
+  for (const r of rows) {
+    const p = r.prompt.trim();
+    if (!p) continue;
+    const k = p.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    prompts.push(p);
+    if (prompts.length >= limit) break;
+  }
+  if (prompts.length === 0) {
+    return {
+      ok: false,
+      error: "No GEO prompts found yet — run a GEO check first so we know what queries to probe.",
+    };
+  }
+
+  let probed = 0;
+  let cited = 0;
+  let hadOverview = 0;
+  for (const prompt of prompts) {
+    try {
+      const r = await probeAiOverview({ query: prompt, domain });
+      if (!r) continue;
+      probed++;
+      if (r.hasOverview) hadOverview++;
+      if (r.cited) cited++;
+      await prisma.geoQuery.create({
+        data: {
+          workspaceId: workspace.id,
+          prompt,
+          provider: "ai_overviews",
+          cited: r.cited,
+          snippet: r.snippet || (r.hasOverview ? "AIO present" : "no AIO"),
+          rawResponse: { sources: r.sources, hasOverview: r.hasOverview },
+        },
+      });
+    } catch (err) {
+      console.warn("[geo] backfill probe failed:", err);
+    }
+  }
+  revalidatePath("/agents/geo");
+  return { ok: true, probed, cited, hadOverview };
 }

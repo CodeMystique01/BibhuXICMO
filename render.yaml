@@ -1,4 +1,6 @@
 
+
+
 # Render Blueprint for XIcmo
 # https://render.com/docs/blueprint-spec
 #
@@ -93,6 +95,10 @@ services:
         value: radeance~ahrefs-scraper
       - key: APIFY_X_ACTOR_ID
         value: apidojo~tweet-scraper
+      # Apify Google SERP scraper used by the GEO agent's AI Overviews probe.
+      # Override only if you use a custom variant; default is the public actor.
+      - key: APIFY_GOOGLE_SERP_ACTOR_ID
+        value: apify~google-search-scraper
 
       # ----- X / Twitter OAuth (for posting drafts) -----
       - key: X_CLIENT_ID

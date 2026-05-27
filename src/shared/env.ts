@@ -81,6 +81,12 @@ const envSchema = z.object({
    */
   APIFY_AHREFS_ACTOR_ID: z.string().default("radeance~ahrefs-scraper"),
   /**
+   * Apify actor id for Google SERP scraping (used by the GEO AI Overviews
+   * probe). The default `apify/google-search-scraper` is the most widely
+   * deployed one — override only if you use a private/custom variant.
+   */
+  APIFY_GOOGLE_SERP_ACTOR_ID: z.string().default("apify~google-search-scraper"),
+  /**
    * Apify actor id for Twitter / X tweet search. Returns recent tweets
    * matching a keyword query. Default actor: `apidojo/tweet-scraper`
    * (~$0.40 per 1k tweets, no X API Basic required).

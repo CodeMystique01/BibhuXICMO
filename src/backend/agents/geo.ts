@@ -6,6 +6,7 @@ import {
   listAvailableProviders,
   DEFAULT_MODEL,
 } from "@/backend/llm";
+import { probeAiOverview } from "./geo-aio-probe";
 import type { Agent, AgentContext } from "./base";
 
 const probeSchema = z.object({
@@ -91,6 +92,50 @@ export const geoAgent: Agent<unknown, GeoAuditResult> = {
           console.warn("GEO probe failed:", err);
         }
       }
+    }
+
+    // ----------------------------------------------------------------------
+    // AI Overviews probe via Apify Google SERP (no extra API key needed —
+    // uses the existing APIFY_SEO_TOKEN / APIFY_TOKEN). Each prompt gets a
+    // single Google search; if Google shows an AI Overview that cites our
+    // domain, we record it as a `geoQuery` with provider "ai_overviews".
+    // Failures are non-fatal — the rest of the run still finishes.
+    // ----------------------------------------------------------------------
+    if (ctx.websiteUrl) {
+      await Promise.all(
+        prompts.map(async (prompt) => {
+          try {
+            const aio = await probeAiOverview({
+              query: prompt,
+              domain: ctx.websiteUrl!,
+            });
+            if (!aio) return; // Apify not configured — silently skip.
+
+            await prisma.geoQuery.create({
+              data: {
+                workspaceId: ctx.workspaceId,
+                prompt,
+                provider: "ai_overviews",
+                cited: aio.cited,
+                snippet: aio.snippet || (aio.hasOverview ? "AIO present" : "no AIO"),
+                rawResponse: {
+                  sources: aio.sources,
+                  hasOverview: aio.hasOverview,
+                },
+              },
+            });
+            breakdown.push({
+              provider: "ai_overviews",
+              prompt,
+              cited: aio.cited,
+              mentioned: aio.cited,
+              competitors: [],
+            });
+          } catch (err) {
+            console.warn("[geo] AIO probe failed for prompt:", prompt, err);
+          }
+        })
+      );
     }
 
     // Score = percent of probes where cited=true, plus a smaller weight for mentions.
