@@ -71,17 +71,23 @@ function snapshotText(fast: CmoFastData): string {
     };
     const dr = get("domainRating", "dr", "domain_rating");
     const backlinks = get("backlinks", "totalBacklinks", "backlinksCount");
-    const refDomains = get("referringDomains", "refDomains", "referring_domains");
+    const refDomains = get("referringDomains", "refdomains", "refDomains", "referring_domains");
+    const rank = get("ahrefsRank", "ahrefs_rank");
+    const dofollowBl = get("dofollowBacklinks", "dofollow_backlinks");
+    const dofollowRd = get("dofollowReferringDomains", "dofollowRefdomains", "dofollow_refdomains");
     const traffic = get("traffic", "organicTraffic", "orgTraffic");
     const parts: string[] = [];
-    if (dr != null) parts.push(`Domain Rating ${dr}`);
-    if (backlinks != null) parts.push(`${backlinks} backlinks`);
+    if (dr != null) parts.push(`Domain Rating ${dr}/100`);
+    if (backlinks != null) parts.push(`${backlinks} total backlinks`);
     if (refDomains != null) parts.push(`${refDomains} referring domains`);
-    if (traffic != null) parts.push(`~${traffic} est. organic traffic`);
-    if (parts.length) lines.push(`Backlink / authority profile: ${parts.join(", ")}.`);
-    else lines.push("Backlink profile: no Ahrefs snapshot captured yet — run an SEO/GEO scan to populate it.");
+    if (dofollowBl != null) parts.push(`${dofollowBl} dofollow backlinks`);
+    if (dofollowRd != null) parts.push(`${dofollowRd} dofollow referring domains`);
+    if (rank != null) parts.push(`Ahrefs Rank #${rank}`);
+    if (traffic != null) parts.push(`~${traffic} est. monthly organic traffic`);
+    if (parts.length) lines.push(`Backlink / authority profile (Ahrefs): ${parts.join(", ")}.`);
+    else lines.push("Backlink profile: no Ahrefs snapshot captured yet — open the AI CMO once to populate it, or run the SEO Agent.");
   } else {
-    lines.push("Backlink profile: no Ahrefs snapshot captured yet — run an SEO/GEO scan to populate it.");
+    lines.push("Backlink profile: no Ahrefs snapshot captured yet — open the AI CMO once to populate it, or run the SEO Agent.");
   }
   if (fast.topKeywords.length) {
     lines.push(`Top keywords: ${fast.topKeywords.slice(0, 8).map((k) => k.query).join(", ")}.`);
