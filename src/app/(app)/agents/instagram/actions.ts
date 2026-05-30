@@ -78,6 +78,15 @@ export async function toggleIGCampaignAutopilotAction(
   return { ok: true as const };
 }
 
+export async function deleteIGCampaignAction(campaignId: string) {
+  const { workspace } = await requireWorkspace();
+  await prisma.iGCampaign.deleteMany({
+    where: { id: campaignId, workspaceId: workspace.id },
+  });
+  revalidatePath("/agents/instagram");
+  return { ok: true as const };
+}
+
 export async function saveIGCookiesAction(cookies: string) {
   const { workspace } = await requireWorkspace();
   if (!cookies?.trim()) {
