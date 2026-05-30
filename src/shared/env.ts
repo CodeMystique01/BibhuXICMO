@@ -119,6 +119,44 @@ const envSchema = z.object({
     .default("afanasenko~instagram-profile-scraper"),
 
   /**
+   * Optional shared Apify token for the LinkedIn agent. Used as a fallback
+   * for both LinkedIn actors when a per-actor token below isn't set.
+   * Falls back further to APIFY_TOKEN.
+   */
+  APIFY_LINKEDIN_TOKEN: z.string().optional(),
+  /**
+   * Apify token for the LinkedIn PROFILE scraper actor. Set this with the
+   * Apify API key you want to bill profile lookups against.
+   * Resolution order: APIFY_LINKEDIN_PROFILE_TOKEN → APIFY_LINKEDIN_TOKEN → APIFY_TOKEN.
+   */
+  APIFY_LINKEDIN_PROFILE_TOKEN: z.string().optional(),
+  /**
+   * Apify token for the LinkedIn COMPANY POSTS scraper actor. Set this with
+   * the Apify API key you want to bill post scrapes against.
+   * Resolution order: APIFY_LINKEDIN_POSTS_TOKEN → APIFY_LINKEDIN_TOKEN → APIFY_TOKEN.
+   */
+  APIFY_LINKEDIN_POSTS_TOKEN: z.string().optional(),
+  /**
+   * Apify actor id for the LinkedIn profile scraper. Returns a full profile
+   * (experience, education, skills, headline, about) for one profile URL /
+   * publicIdentifier per run. Default: `harvestapi/linkedin-profile-scraper`
+   * (~$4 per 1k profiles, no cookies required).
+   */
+  APIFY_LINKEDIN_PROFILE_ACTOR_ID: z
+    .string()
+    .default("harvestapi~linkedin-profile-scraper"),
+  /**
+   * Apify actor id for the LinkedIn company/profile posts scraper. Returns
+   * recent posts with engagement (likes/comments/shares) for one or more
+   * company/profile URLs in a single run. Default:
+   * `harvestapi/linkedin-company-posts` (~$2 per 1k posts; reactions and
+   * comments bill as separate items, so we leave them off by default).
+   */
+  APIFY_LINKEDIN_COMPANY_POSTS_ACTOR_ID: z
+    .string()
+    .default("harvestapi~linkedin-company-posts"),
+
+  /**
    * Google YouTube Data API v3 key. Powers /agents/youtube creator
    * search — same source the QuickAds reference uses. Get one at
    * https://console.cloud.google.com/apis/credentials after enabling

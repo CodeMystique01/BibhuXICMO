@@ -119,6 +119,7 @@ model Workspace {
   igCampaigns      IGCampaign[]
   ytCreators       YTCreator[]
   seoToolRuns      SeoToolRun[]
+  linkedinScans    LinkedInScan[]
   aiCitations      AiCitationSnapshot[]
   igNegotiations   IGNegotiation[]
   contentDrafts    ContentDraft[]
@@ -303,6 +304,35 @@ model SeoToolRun {
 
   @@unique([workspaceId, tool, inputHash])
   @@index([workspaceId, tool, createdAt])
+}
+
+// --------------------------------------------------------------------------
+// LinkedIn agent — cached Apify (HarvestAPI) scraper results. COMPANY_POSTS
+// caches a company/profile posts pull; PROFILE caches a single enriched
+// profile. Apify is paid, so we cache aggressively (24h) keyed by the
+// normalized input hash. Upsert-on-rerun keeps one row per input.
+// --------------------------------------------------------------------------
+enum LinkedInScanType {
+  COMPANY_POSTS // posts + engagement for one or more company/profile URLs
+  PROFILE       // full enriched profile for a single profile URL
+}
+
+model LinkedInScan {
+  id          String           @id @default(cuid())
+  workspaceId String
+  type        LinkedInScanType
+  /** SHA-256 of the normalized input (targets+maxPosts, or profile query). */
+  inputHash   String
+  /** Original input parameters (for display + re-run). */
+  input       Json
+  /** Normalized Apify response (posts list or profile object). */
+  result      Json
+  createdAt   DateTime         @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, type, inputHash])
+  @@index([workspaceId, type, createdAt])
 }
 
 // --------------------------------------------------------------------------

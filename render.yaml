@@ -136,6 +136,22 @@ services:
       - key: APIFY_SEO_TOKEN
         sync: false
 
+      # ----- Apify LinkedIn agent (HarvestAPI scrapers) -----
+      # One Apify API key per actor (paste each separately). Each falls back
+      # to APIFY_LINKEDIN_TOKEN, then APIFY_TOKEN, if left blank.
+      - key: APIFY_LINKEDIN_PROFILE_TOKEN
+        sync: false
+      - key: APIFY_LINKEDIN_POSTS_TOKEN
+        sync: false
+      # Optional shared fallback token for both actors.
+      - key: APIFY_LINKEDIN_TOKEN
+        sync: false
+      # Actor IDs (not secrets) — leave as-is.
+      - key: APIFY_LINKEDIN_PROFILE_ACTOR_ID
+        value: harvestapi~linkedin-profile-scraper
+      - key: APIFY_LINKEDIN_COMPANY_POSTS_ACTOR_ID
+        value: harvestapi~linkedin-company-posts
+
       # ----- YouTube creator discovery (Google YT Data API v3) -----
       # Get a key at https://console.cloud.google.com/apis/credentials
       # after enabling the "YouTube Data API v3" service. 10 000-unit
