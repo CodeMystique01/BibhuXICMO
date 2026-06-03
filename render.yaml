@@ -16,12 +16,8 @@
 # web service + database to "starter" once you have traffic — the free web
 # tier spins down after 15 min idle, which adds cold-start latency.
 
-databases:
-  - name: xicmo-db
-    plan: free
-    databaseName: xicmo
-    user: xicmo
-    postgresMajorVersion: 16
+# Postgres is hosted on Supabase (not Render). Set DATABASE_URL + DIRECT_URL
+# in the web service env below using your Supabase connection strings.
 
 services:
   # ------------------------------------------------------------------
@@ -52,10 +48,14 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      # ----- Supabase Postgres -----
+      # DATABASE_URL  = transaction pooler (port 6543, append ?pgbouncer=true&connection_limit=1)
+      # DIRECT_URL    = session pooler / direct (port 5432) — used by `prisma db push`
+      # Get both from Supabase → Project Settings → Database → Connection string.
       - key: DATABASE_URL
-        fromDatabase:
-          name: xicmo-db
-          property: connectionString
+        sync: false
+      - key: DIRECT_URL
+        sync: false
       - key: REDIS_URL
         fromService:
           type: keyvalue

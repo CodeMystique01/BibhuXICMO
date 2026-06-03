@@ -5,9 +5,13 @@ const envSchema = z.object({
   NEXT_PUBLIC_APP_URL: z.string().url().default("http://localhost:3000"),
   APP_URL: z.string().url().default("http://localhost:3000"),
 
+  // Supabase: use the transaction pooler URL (port 6543, ?pgbouncer=true) here.
   DATABASE_URL: z
     .string()
     .default("postgresql://xicmo:xicmo@localhost:5432/xicmo?schema=public"),
+  // Supabase: direct/session connection (port 5432) for `prisma db push`.
+  // Falls back to DATABASE_URL locally where a single Postgres serves both.
+  DIRECT_URL: z.string().optional(),
   REDIS_URL: z.string().default("redis://localhost:6379"),
 
   AUTH_SECRET: z.string().min(1).default("dev-secret-change-me"),

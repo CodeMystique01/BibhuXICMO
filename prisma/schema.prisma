@@ -6,7 +6,11 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  // Pooled connection (Supabase transaction pooler, port 6543) used by the app.
   url      = env("DATABASE_URL")
+  // Direct/session connection (port 5432) used for `prisma db push` / migrations.
+  // Supabase requires this because DDL can't run over the transaction pooler.
+  directUrl = env("DIRECT_URL")
 }
 
 // ===========================================================================

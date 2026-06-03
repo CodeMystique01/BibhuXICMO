@@ -14,6 +14,7 @@
 import { createHash } from "crypto";
 import type { Prisma, SeoTool } from "@prisma/client";
 import { prisma } from "@/backend/db";
+import { cacheGet, cacheSet } from "@/backend/cache";
 import {
   ApifyNotConfiguredError,
   ApifyAhrefsError,
@@ -71,12 +72,28 @@ export function hashInput(input: Record<string, unknown>): string {
   return createHash("sha256").update(stable).digest("hex").slice(0, 32);
 }
 
+function redisKey(workspaceId: string, tool: SeoTool, inputHash: string): string {
+  return `seo:${workspaceId}:${tool}:${inputHash}`;
+}
+
 async function readCached<T>(args: {
   workspaceId: string;
   tool: SeoTool;
   inputHash: string;
   ttlMs: number;
 }): Promise<{ result: T; cachedAt: Date } | null> {
+  const rk = redisKey(args.workspaceId, args.tool, args.inputHash);
+
+  // 1. Hot layer: Redis.
+  const hot = await cacheGet<{ result: T; cachedAt: string }>(rk);
+  if (hot) {
+    const cachedAt = new Date(hot.cachedAt);
+    if (Date.now() - cachedAt.getTime() <= args.ttlMs) {
+      return { result: hot.result, cachedAt };
+    }
+  }
+
+  // 2. Durable layer: Postgres (Supabase).
   try {
     const row = await prisma.seoToolRun.findUnique({
       where: {
@@ -89,6 +106,11 @@ async function readCached<T>(args: {
     });
     if (!row) return null;
     if (Date.now() - row.createdAt.getTime() > args.ttlMs) return null;
+    await cacheSet(
+      rk,
+      { result: row.result, cachedAt: row.createdAt.toISOString() },
+      Math.floor(args.ttlMs / 1000)
+    );
     return { result: row.result as T, cachedAt: row.createdAt };
   } catch (err) {
     const code = (err as { code?: string })?.code;
@@ -132,6 +154,11 @@ async function writeCached(args: {
       console.error(`[seo-tools] write failed for ${args.tool}:`, err);
     }
   }
+  await cacheSet(
+    redisKey(args.workspaceId, args.tool, args.inputHash),
+    { result: args.result, cachedAt: new Date().toISOString() },
+    Math.floor(DEFAULT_TTL_MS / 1000)
+  );
 }
 
 // --------------------------------------------------------------------------

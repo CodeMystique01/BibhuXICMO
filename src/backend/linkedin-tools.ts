@@ -11,6 +11,7 @@
 import { createHash } from "crypto";
 import type { Prisma, LinkedInScanType } from "@prisma/client";
 import { prisma } from "@/backend/db";
+import { cacheGet, cacheSet } from "@/backend/cache";
 import {
   ApifyLinkedInNotConfiguredError,
   ApifyLinkedInError,
@@ -99,12 +100,28 @@ function extractPublicIdentifier(url: string): string | null {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
+function redisKey(workspaceId: string, type: LinkedInScanType, inputHash: string): string {
+  return `li:${workspaceId}:${type}:${inputHash}`;
+}
+
 async function readCached<T>(args: {
   workspaceId: string;
   type: LinkedInScanType;
   inputHash: string;
   ttlMs: number;
 }): Promise<{ result: T; cachedAt: Date } | null> {
+  const rk = redisKey(args.workspaceId, args.type, args.inputHash);
+
+  // 1. Hot layer: Redis.
+  const hot = await cacheGet<{ result: T; cachedAt: string }>(rk);
+  if (hot) {
+    const cachedAt = new Date(hot.cachedAt);
+    if (Date.now() - cachedAt.getTime() <= args.ttlMs) {
+      return { result: hot.result, cachedAt };
+    }
+  }
+
+  // 2. Durable layer: Postgres (Supabase).
   try {
     const row = await prisma.linkedInScan.findUnique({
       where: {
@@ -117,6 +134,12 @@ async function readCached<T>(args: {
     });
     if (!row) return null;
     if (Date.now() - row.createdAt.getTime() > args.ttlMs) return null;
+    // Warm Redis for next time.
+    await cacheSet(
+      rk,
+      { result: row.result, cachedAt: row.createdAt.toISOString() },
+      Math.floor(args.ttlMs / 1000)
+    );
     return { result: row.result as T, cachedAt: row.createdAt };
   } catch (err) {
     const code = (err as { code?: string })?.code;
@@ -160,6 +183,12 @@ async function writeCached(args: {
       console.error(`[linkedin-tools] write failed for ${args.type}:`, err);
     }
   }
+  // Mirror into the Redis hot layer (best-effort).
+  await cacheSet(
+    redisKey(args.workspaceId, args.type, args.inputHash),
+    { result: args.result, cachedAt: new Date().toISOString() },
+    Math.floor(DEFAULT_TTL_MS / 1000)
+  );
 }
 
 // --------------------------------------------------------------------------
