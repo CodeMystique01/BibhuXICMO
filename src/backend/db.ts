@@ -10,6 +10,16 @@ export const prisma =
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
   });
 
-if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.prisma = prisma;
+// Reuse one client per Node process (dev + production) to avoid connection churn
+// against Supabase pooler limits.
+globalForPrisma.prisma = prisma;
+
+/** Cheap connectivity probe for health checks and startup diagnostics. */
+export async function checkDbConnection(): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }

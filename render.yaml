@@ -43,7 +43,7 @@ services:
     # `prisma db push` runs in startCommand (instead of preDeployCommand)
     # so the free tier is happy — pre-deploy hooks are paid-only on Render.
     # The push is idempotent, so re-running on every cold start is safe.
-    startCommand: npx prisma db push --skip-generate && npm start
+    startCommand: bash scripts/render-start.sh
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
